@@ -98,6 +98,7 @@ private:
 
     // HTTP handlers
     static int handle_index(httpd_req* req);
+    static int handle_favicon(httpd_req* req);
     static int handle_status(httpd_req* req);
     static int handle_tracks(httpd_req* req);
     static int handle_radio_get(httpd_req* req);

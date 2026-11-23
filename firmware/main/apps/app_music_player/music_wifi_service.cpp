@@ -355,8 +355,7 @@ function uploadFile(){
   xhr.send(f);
 }
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-pollStatus();loadTracks();loadRadio();
-setInterval(pollStatus,1800);
+(async()=>{await pollStatus();await loadTracks();await loadRadio();setInterval(pollStatus,2200);})();
 </script>
 </body>
 </html>
@@ -597,7 +596,8 @@ bool MusicWifiService::start_httpd()
     httpd_config_t cfg      = HTTPD_DEFAULT_CONFIG();
     cfg.server_port         = 80;
     cfg.stack_size          = 8192;
-    cfg.max_uri_handlers    = 10;
+    cfg.max_uri_handlers    = 12;
+    cfg.max_open_sockets    = 7;
     cfg.lru_purge_enable    = true;
     cfg.recv_wait_timeout   = 15;
     cfg.send_wait_timeout   = 15;
@@ -613,13 +613,14 @@ bool MusicWifiService::start_httpd()
     }
 
     const httpd_uri_t uris[] = {
-        {"/",           HTTP_GET,  handle_index,     this},
-        {"/api/status", HTTP_GET,  handle_status,    this},
-        {"/api/tracks", HTTP_GET,  handle_tracks,    this},
-        {"/api/radio",  HTTP_GET,  handle_radio_get, this},
-        {"/api/radio",  HTTP_POST, handle_radio_post,this},
-        {"/api/cmd",    HTTP_POST, handle_cmd,       this},
-        {"/api/upload", HTTP_POST, handle_upload,    this},
+        {"/",            HTTP_GET,  handle_index,     this},
+        {"/favicon.ico", HTTP_GET,  handle_favicon,   this},
+        {"/api/status",  HTTP_GET,  handle_status,    this},
+        {"/api/tracks",  HTTP_GET,  handle_tracks,    this},
+        {"/api/radio",   HTTP_GET,  handle_radio_get, this},
+        {"/api/radio",   HTTP_POST, handle_radio_post,this},
+        {"/api/cmd",     HTTP_POST, handle_cmd,       this},
+        {"/api/upload",  HTTP_POST, handle_upload,    this},
     };
     for (const auto& u : uris) {
         httpd_register_uri_handler(srv, &u);
@@ -1001,6 +1002,13 @@ int MusicWifiService::handle_index(httpd_req* req)
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_send(req, WEB_UI_HTML, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+int MusicWifiService::handle_favicon(httpd_req* req)
+{
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_send(req, nullptr, 0);
     return ESP_OK;
 }
 
