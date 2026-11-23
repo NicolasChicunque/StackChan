@@ -433,7 +433,7 @@ void AppMcp::mic_task_loop()
     auto audio_codec = Board::GetInstance().GetAudioCodec();
     std::vector<int16_t> raw_in;
     std::vector<int16_t> mono_16k;
-    float noise_floor = 240.0f;
+    float noise_floor = 130.0f;
 
     while (_running.load()) {
         bool manual_req = _rec_start_req.exchange(false);
@@ -488,8 +488,8 @@ void AppMcp::mic_task_loop()
         _rec_active   = true;
         _rec_speaking = false;
         _mic_level    = 0;
-        set_status_text(_auto_mode.load() ? "Hands-free: speak anytime" : "Listening... speak now");
-        GetHAL().showRgbColor(0, 52, 46);
+        set_status_text(_auto_mode.load() ? "Speak now (hands-free)" : "Listening... speak now");
+        GetHAL().showRgbColor(0, 78, 26);
 
         size_t pcm_pos       = 0;
         size_t max_pcm_bytes = _rec_wav_cap - REC_HEADER_BYTES;
@@ -528,7 +528,7 @@ void AppMcp::mic_task_loop()
                 continue;
             }
 
-            float thresh = std::max(780.0f, noise_floor * 3.2f);
+            float thresh = std::max(440.0f, noise_floor * 2.6f);
             if (!speech_heard) {
                 // Store chunk in pre-roll ring while waiting for voice
                 std::memcpy(preroll.data() + preroll_head * out_frames, mono_16k.data(),
@@ -539,11 +539,11 @@ void AppMcp::mic_task_loop()
                 }
 
                 if (rms > thresh) {
-                    if (++speech_streak >= 3) {
+                    if (++speech_streak >= 2) {
                         speech_heard    = true;
                         speech_start_ms = now;
                         last_voice_ms   = now;
-                        voiced_frames   = 3;
+                        voiced_frames   = 2;
                         _rec_speaking   = true;
                         set_status_text("Hearing you... (pause to send)");
                         GetHAL().showRgbColor(88, 12, 12);
@@ -575,7 +575,7 @@ void AppMcp::mic_task_loop()
                 break;  // Reached 30s max cap
             }
 
-            if (rms > thresh * 0.78f) {
+            if (rms > thresh * 0.68f) {
                 last_voice_ms = now;
                 ++voiced_frames;
             }
@@ -625,6 +625,13 @@ void AppMcp::play_wav_url(const std::string& url)
         for (int i = 0; i < 40 && _rec_active.load(); ++i) {
             vTaskDelay(pdMS_TO_TICKS(15));
         }
+    }
+
+    // Clear any stale unconsumed dictation so mic always re-arms right after playback
+    {
+        std::lock_guard<std::mutex> lk(_rec_mtx);
+        _rec_ready     = false;
+        _rec_wav_bytes = 0;
     }
 
     _play_abort      = false;
@@ -1049,6 +1056,11 @@ int AppMcp::handle_play(httpd_req* req)
     }
     cJSON_Delete(root);
 
+    {
+        std::lock_guard<std::mutex> lk(self->_rec_mtx);
+        self->_rec_ready     = false;
+        self->_rec_wav_bytes = 0;
+    }
     self->_play_abort   = true;
     self->_play_pending = true;
     send_json(req, "{\"success\":true}");
