@@ -66,6 +66,7 @@ public:
     void stop_radio();
     bool is_radio_active() const;
     bool is_radio_connected() const;
+    bool is_radio_aac() const;
     bool is_radio_eof() const;
     std::string get_radio_error() const;
     size_t radio_buffered_bytes() const;
@@ -119,6 +120,7 @@ private:
     std::atomic<bool> _radio_stop_req{false};
     std::atomic<bool> _radio_active{false};
     std::atomic<bool> _radio_connected{false};
+    std::atomic<bool> _radio_is_aac{false};
     std::atomic<bool> _radio_eof{false};
 
     mutable std::mutex _state_mtx;
