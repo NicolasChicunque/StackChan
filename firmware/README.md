@@ -32,3 +32,14 @@ ctest --test-dir build-host-tests --output-on-failure
 ```bash
 idf.py flash
 ```
+
+## Built-in Apps
+
+- `AI.AGENT` – Xiaozhi voice AI assistant
+- `AVATAR` – Remote avatar / WebSocket / video call mode
+- `ESPNOW.REMOTE` – ESP-NOW wireless controller
+- `APP.CENTER` – Online firmware/app launcher
+- `EZDATA` – EzData cloud integration
+- `DANCE` – BLE dance controller
+- `GEMINI` – Direct Gemini Live API voice assistant (`WSS` over Wi-Fi, tap-to-talk, free-tier API key via `/sd/gemini.txt` + NVS)
+- `SETUP` – Device settings, hardware tests, and app visibility toggles
