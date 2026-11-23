@@ -332,19 +332,24 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
 
     auto& avatar = stackchan.avatar();
 
-    // Map emotion string to stackchan::Emotion
+    // Map emotion string to stackchan::Emotion (and extended Naruto sprite states)
+    auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar);
+
     if (strcmp(emotion, "neutral") == 0) {
         avatar.setEmotion(Emotion::Neutral);
-    } else if (strcmp(emotion, "happy") == 0) {
+    } else if (strcmp(emotion, "happy") == 0 || strcmp(emotion, "laughing") == 0 || strcmp(emotion, "funny") == 0) {
         avatar.setEmotion(Emotion::Happy);
-    } else if (strcmp(emotion, "laughing") == 0) {
-        avatar.setEmotion(Emotion::Happy);
-    } else if (strcmp(emotion, "angry") == 0) {
+    } else if (strcmp(emotion, "angry") == 0 || strcmp(emotion, "pouty") == 0) {
         avatar.setEmotion(Emotion::Angry);
-    } else if (strcmp(emotion, "sad") == 0) {
+    } else if (strcmp(emotion, "sad") == 0 || strcmp(emotion, "crying") == 0 || strcmp(emotion, "shy") == 0 ||
+               strcmp(emotion, "embarrassed") == 0) {
         avatar.setEmotion(Emotion::Sad);
-    } else if (strcmp(emotion, "crying") == 0) {
-        avatar.setEmotion(Emotion::Sad);
+    } else if (strcmp(emotion, "smug") == 0 || strcmp(emotion, "cool") == 0 || strcmp(emotion, "confident") == 0 ||
+               strcmp(emotion, "winking") == 0) {
+        avatar.setEmotion(Emotion::Happy);
+        if (naruto_avatar) {
+            naruto_avatar->setSpriteVariant(5); // Smug
+        }
     } else if (strcmp(emotion, "sleepy") == 0) {
         avatar.setEmotion(Emotion::Sleepy);
         avatar.setSpeech("Zzz…");
@@ -364,7 +369,7 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
         auto& motion = GetStackChan().motion();
         motion.pitchServo().moveWithSpeed(0, 80);
 
-    } else if (strcmp(emotion, "doubtful") == 0) {
+    } else if (strcmp(emotion, "doubtful") == 0 || strcmp(emotion, "thinking") == 0 || strcmp(emotion, "confused") == 0) {
         avatar.setEmotion(Emotion::Doubt);
     } else {
         ESP_LOGW(TAG, "Unknown emotion: %s, using NEUTRAL", emotion);
@@ -503,6 +508,10 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = -1;
         }
 
+        if (auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
+            naruto_avatar->setSpriteVariant(1); // Thinking / attentive while listening
+        }
+
         GetHAL().setRgbColor(0, 0, 50, 0);
         GetHAL().refreshRgb();
 
@@ -516,6 +525,10 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = -1;
         }
 
+        if (auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
+            naruto_avatar->setSpriteVariant(-1); // Return to current emotion (Calm by default)
+        }
+
         is_idle = true;
 
         GetHAL().setRgbColor(0, 0, 0, 0);
@@ -524,6 +537,10 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
     } else if (strcmp(status, Lang::Strings::SPEAKING) == 0) {
         if (speaking_modifier_id_ < 0) {
             speaking_modifier_id_ = stackchan.addModifier(std::make_unique<SpeakingModifier>(0, 180, false));
+        }
+
+        if (auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
+            naruto_avatar->setSpriteVariant(-1); // Allow animated alternation while speaking
         }
 
         GetHAL().setRgbColor(0, 0, 0, 50);

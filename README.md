@@ -12,6 +12,10 @@ This fork adds a native **MicroSD Music Player (`MUSIC`)** app integrated direct
 
 > **Transparency note**: This feature was built through AI-assisted development (*vibe coding*) and iteratively tested on physical StackChan hardware (M5Stack CoreS3, ESP-IDF v6.1). Code reviews, suggestions, and improvements from the community are very welcome.
 
+### Personal Branch Customization (`custom/naruto`)
+
+This branch builds on `feat/music-player` and replaces the default avatar in `AI.AGENT` and `MUSIC` with a custom 7-state Naruto pixel-art sprite set (`Calm`, `Thinking`, `Happy`, `Sleepy`, `Shy`, `Smug`, `Pouty`) cached in PSRAM for smooth voice playback. For a clean, upstream-ready firmware without custom character sprites, switch to `feat/music-player`.
+
 ----
 
 # StackChan Open-Source

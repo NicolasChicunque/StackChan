@@ -51,9 +51,9 @@ struct PsramAllocator {
 using PsramString = std::basic_string<char, std::char_traits<char>, PsramAllocator<char>>;
 
 /**
- * @brief MicroSD Music Player app (/sd) for StackChan.
- * Clean 6-button main bar, animated StackChan face, dedicated Settings screen,
- * and automatic NVS persistence for preferences and last played track.
+ * @brief MicroSD (/sd) music player app for StackChan.
+ * Clean UI with a 6-button control bar, animated Naruto avatar,
+ * dedicated settings screen, and automatic NVS persistence.
  */
 class AppMusicPlayer : public mooncake::AppAbility {
 public:
@@ -186,6 +186,7 @@ private:
     uint32_t _last_batt_tick  = 0;
     int _batt_pct             = -1;
     bool _batt_chg            = false;
+    bool _avatar_showing_happy = false;
 
     // Background audio task synchronization
     mutable std::mutex _audio_mutex;
@@ -204,6 +205,10 @@ private:
     bool _active_is_mp3       = false;
     int32_t _target_start_ms  = 0;
     AudioProbeInfo _active_probe;
+
+    // Naruto avatar assets for the music player
+    lv_image_dsc_t _img_naruto_calm  = {};
+    lv_image_dsc_t _img_naruto_happy = {};
 
     /* --------------------------- LVGL Widgets ----------------------------- */
     lv_obj_t* _root_screen    = nullptr;
@@ -224,12 +229,9 @@ private:
     lv_obj_t* _lbl_vol_ver    = nullptr;
     lv_obj_t* _lbl_status     = nullptr;
 
-    // Center stage: animated classic StackChan face + floating musical notes
+    // Center stage: animated Naruto avatar + floating musical notes
     lv_obj_t* _stage_cont     = nullptr;
-    lv_obj_t* _face_card      = nullptr;
-    lv_obj_t* _face_eye_l     = nullptr;
-    lv_obj_t* _face_eye_r     = nullptr;
-    lv_obj_t* _face_mouth     = nullptr;
+    lv_obj_t* _avatar_img     = nullptr;
     lv_obj_t* _note_lbls[4]   = {nullptr};
 
     struct BtnWidget {
