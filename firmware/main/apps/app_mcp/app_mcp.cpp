@@ -41,12 +41,14 @@ constexpr const char* TAG            = "MCP";
 constexpr const char* NVS_NS         = "mcp_bridge";
 constexpr const char* KEY_VOL        = "volume";
 constexpr const char* KEY_AUTO       = "auto_mode";
+constexpr const char* KEY_PAUSE_MS   = "pause_ms";
+constexpr const char* KEY_MIC_SENS   = "mic_sens";
 constexpr int W                      = 320;
 constexpr int H                      = 240;
 constexpr int Y_HOME_DEG             = 45;
 constexpr uint32_t REC_SAMPLE_RATE   = 16000;
 constexpr size_t REC_MAX_SECONDS     = 30;
-constexpr uint32_t SILENCE_STOP_MS   = 950;
+constexpr uint32_t DEFAULT_PAUSE_MS  = 2000;
 constexpr size_t PREROLL_CHUNKS      = 8;  // 8 * 40 ms = 320 ms pre-roll
 constexpr size_t REC_HEADER_BYTES    = 44;
 constexpr size_t REC_BUF_BYTES       = REC_HEADER_BYTES + REC_SAMPLE_RATE * 2 * REC_MAX_SECONDS;
@@ -216,13 +218,18 @@ void AppMcp::onOpen()
     _gesture_type        = 0;
     _shown_naruto_idx    = -1;
 
-    // Load saved speaker volume & auto hands-free preference
+    // Load saved speaker volume, auto mode, silence pause & mic sensitivity
     {
         Settings s(NVS_NS, false);
-        int v      = s.GetInt(KEY_VOL, 75);
-        _volume    = std::clamp(v, 10, 100);
-        _auto_mode = s.GetBool(KEY_AUTO, true);
+        int v            = s.GetInt(KEY_VOL, 75);
+        int p            = s.GetInt(KEY_PAUSE_MS, static_cast<int>(DEFAULT_PAUSE_MS));
+        int sens         = s.GetInt(KEY_MIC_SENS, 1);
+        _volume          = std::clamp(v, 10, 100);
+        _auto_mode       = s.GetBool(KEY_AUTO, true);
+        _silence_stop_ms = static_cast<uint32_t>(std::clamp(p, 800, 4000));
+        _mic_sens        = std::clamp(sens, 0, 2);
     }
+    _settings_open = false;
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume.load()), false);
 
     // Load Naruto 7-state expressions (if present in assets partition)
@@ -528,7 +535,10 @@ void AppMcp::mic_task_loop()
                 continue;
             }
 
-            float thresh = std::max(440.0f, noise_floor * 2.6f);
+            int sens = _mic_sens.load();
+            float min_thr = (sens == 0) ? 680.0f : (sens == 2 ? 320.0f : 440.0f);
+            float mult    = (sens == 0) ? 3.0f : (sens == 2 ? 2.2f : 2.6f);
+            float thresh  = std::max(min_thr, noise_floor * mult);
             if (!speech_heard) {
                 // Store chunk in pre-roll ring while waiting for voice
                 std::memcpy(preroll.data() + preroll_head * out_frames, mono_16k.data(),
@@ -580,8 +590,9 @@ void AppMcp::mic_task_loop()
                 ++voiced_frames;
             }
 
-            // Auto-stop after 0.95s of silence following speech
-            if ((now - last_voice_ms) >= SILENCE_STOP_MS && (now - speech_start_ms) >= 500) {
+            // Auto-stop after configured silence pause following speech
+            uint32_t pause_ms = _silence_stop_ms.load();
+            if ((now - last_voice_ms) >= pause_ms && (now - speech_start_ms) >= 500) {
                 break;
             }
             if ((now - speech_start_ms) >= REC_MAX_SECONDS * 1000) {
@@ -840,6 +851,59 @@ void AppMcp::change_volume(int delta)
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(v), false);
     Settings s(NVS_NS, true);
     s.SetInt(KEY_VOL, v);
+    refresh_settings_ui();
+}
+
+void AppMcp::change_pause_ms(int delta_ms)
+{
+    int p            = std::clamp(static_cast<int>(_silence_stop_ms.load()) + delta_ms, 800, 4000);
+    _silence_stop_ms = static_cast<uint32_t>(p);
+    Settings s(NVS_NS, true);
+    s.SetInt(KEY_PAUSE_MS, p);
+    refresh_settings_ui();
+}
+
+void AppMcp::set_mic_sens(int sens)
+{
+    int clamped = std::clamp(sens, 0, 2);
+    _mic_sens   = clamped;
+    Settings s(NVS_NS, true);
+    s.SetInt(KEY_MIC_SENS, clamped);
+    refresh_settings_ui();
+}
+
+void AppMcp::set_settings_open(bool open)
+{
+    _settings_open = open;
+    if (_settings_panel) {
+        if (open) {
+            refresh_settings_ui();
+            lv_obj_remove_flag(_settings_panel, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(_settings_panel);
+        } else {
+            lv_obj_add_flag(_settings_panel, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void AppMcp::refresh_settings_ui()
+{
+    if (_lbl_set_pause) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%.1fs", _silence_stop_ms.load() / 1000.0f);
+        lv_label_set_text(_lbl_set_pause, buf);
+    }
+    if (_lbl_set_vol) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%d%%", _volume.load());
+        lv_label_set_text(_lbl_set_vol, buf);
+    }
+    int sens = _mic_sens.load();
+    for (int i = 0; i < 3; ++i) {
+        if (_btn_sens[i]) {
+            lv_obj_set_style_bg_color(_btn_sens[i], lv_color_hex(i == sens ? COL_TEAL_DK : COL_CARD_HI), 0);
+        }
+    }
 }
 
 void AppMcp::process_motion_cmds()
@@ -1284,10 +1348,10 @@ void AppMcp::build_ui()
     lv_obj_set_size(_bar_level, 0, 4);
     style_box(_bar_level, COL_TEAL, 2);
 
-    // Bottom bar: DICTATE | AUTO | V- | V+ | EXIT
+    // Bottom bar: TALK | AUTO | SET | EXIT
     _btn_dictate = lv_button_create(_root);
     lv_obj_set_pos(_btn_dictate, 8, 186);
-    lv_obj_set_size(_btn_dictate, 108, 44);
+    lv_obj_set_size(_btn_dictate, 120, 44);
     style_box(_btn_dictate, COL_TEAL_DK, 10);
     _lbl_dictate = lv_label_create(_btn_dictate);
     lv_obj_center(_lbl_dictate);
@@ -1302,8 +1366,8 @@ void AppMcp::build_ui()
         LV_EVENT_CLICKED, this);
 
     _btn_auto = lv_button_create(_root);
-    lv_obj_set_pos(_btn_auto, 120, 186);
-    lv_obj_set_size(_btn_auto, 62, 44);
+    lv_obj_set_pos(_btn_auto, 132, 186);
+    lv_obj_set_size(_btn_auto, 64, 44);
     style_box(_btn_auto, COL_GREEN, 10);
     _lbl_auto = lv_label_create(_btn_auto);
     lv_obj_center(_lbl_auto);
@@ -1318,10 +1382,10 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    auto make_btn = [&](int x, int w, const char* txt, uint32_t bg, uint32_t fg) {
-        lv_obj_t* b = lv_button_create(_root);
-        lv_obj_set_pos(b, x, 186);
-        lv_obj_set_size(b, w, 44);
+    auto make_btn = [&](lv_obj_t* parent, int x, int y, int w, int h, const char* txt, uint32_t bg, uint32_t fg) {
+        lv_obj_t* b = lv_button_create(parent);
+        lv_obj_set_pos(b, x, y);
+        lv_obj_set_size(b, w, h);
         style_box(b, bg, 10);
         lv_obj_t* l = lv_label_create(b);
         lv_obj_center(l);
@@ -1331,36 +1395,134 @@ void AppMcp::build_ui()
         return b;
     };
 
-    lv_obj_t* btn_vd = make_btn(186, 36, "V-", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_set = make_btn(_root, 200, 186, 60, 44, LV_SYMBOL_SETTINGS " SET", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
-        btn_vd,
+        btn_set,
         [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_volume(-10);
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->set_settings_open(true);
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_vu = make_btn(226, 36, "V+", COL_CARD, COL_TEXT);
-    lv_obj_add_event_cb(
-        btn_vu,
-        [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_volume(10);
-        },
-        LV_EVENT_CLICKED, this);
-
-    lv_obj_t* btn_exit = make_btn(266, 46, "EXIT", COL_CARD_HI, COL_YELLOW);
+    lv_obj_t* btn_exit = make_btn(_root, 264, 186, 48, 44, "EXIT", COL_CARD_HI, COL_YELLOW);
     lv_obj_add_event_cb(
         btn_exit,
         [](lv_event_t* e) {
             static_cast<AppMcp*>(lv_event_get_user_data(e))->close();
         },
         LV_EVENT_CLICKED, this);
+
+    // Settings overlay (hidden by default): Silence Pause, Mic Sensitivity, Volume
+    _settings_panel = lv_obj_create(_root);
+    lv_obj_set_pos(_settings_panel, 0, 0);
+    lv_obj_set_size(_settings_panel, W, H);
+    style_box(_settings_panel, COL_BG, 0);
+    lv_obj_add_flag(_settings_panel, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* lbl_set_title = lv_label_create(_settings_panel);
+    lv_obj_set_pos(lbl_set_title, 12, 12);
+    lv_obj_set_style_text_font(lbl_set_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_set_title, lv_color_hex(COL_TEAL), 0);
+    lv_label_set_text(lbl_set_title, LV_SYMBOL_SETTINGS " MCP SETTINGS");
+
+    lv_obj_t* btn_back = make_btn(_settings_panel, 240, 6, 70, 30, LV_SYMBOL_LEFT " BACK", COL_TEAL_DK, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_back,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->set_settings_open(false);
+        },
+        LV_EVENT_CLICKED, this);
+
+    auto make_row = [&](int y, const char* title) {
+        lv_obj_t* card = lv_obj_create(_settings_panel);
+        lv_obj_set_pos(card, 10, y);
+        lv_obj_set_size(card, 300, 56);
+        style_box(card, COL_CARD, 10);
+        lv_obj_t* l = lv_label_create(card);
+        lv_obj_set_pos(l, 12, 20);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(COL_TEXT), 0);
+        lv_label_set_text(l, title);
+        return card;
+    };
+
+    // Row 1: Silence Pause (0.8s .. 4.0s)
+    lv_obj_t* row_pause = make_row(44, "PAUSE");
+    lv_obj_t* btn_pm    = make_btn(row_pause, 114, 9, 48, 38, "-", COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_pm,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_pause_ms(-200);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _lbl_set_pause = lv_label_create(row_pause);
+    lv_obj_set_pos(_lbl_set_pause, 164, 19);
+    lv_obj_set_width(_lbl_set_pause, 72);
+    lv_obj_set_style_text_align(_lbl_set_pause, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_set_pause, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lbl_set_pause, lv_color_hex(COL_WHITE), 0);
+
+    lv_obj_t* btn_pp = make_btn(row_pause, 238, 9, 48, 38, "+", COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_pp,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_pause_ms(200);
+        },
+        LV_EVENT_CLICKED, this);
+
+    // Row 2: Mic Sensitivity (LOW / MED / HIGH)
+    lv_obj_t* row_mic          = make_row(108, "MIC");
+    const char* sens_labels[3] = {"LOW", "MED", "HIGH"};
+    for (int i = 0; i < 3; ++i) {
+        _btn_sens[i] = make_btn(row_mic, 114 + i * 59, 9, 54, 38, sens_labels[i], COL_CARD_HI, COL_WHITE);
+        lv_obj_set_user_data(_btn_sens[i], reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+        lv_obj_add_event_cb(
+            _btn_sens[i],
+            [](lv_event_t* e) {
+                auto* self = static_cast<AppMcp*>(lv_event_get_user_data(e));
+                int idx    = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(e)))));
+                self->set_mic_sens(idx);
+            },
+            LV_EVENT_CLICKED, this);
+    }
+
+    // Row 3: Speaker Volume (10% .. 100%)
+    lv_obj_t* row_vol = make_row(172, "VOLUME");
+    lv_obj_t* btn_vm  = make_btn(row_vol, 114, 9, 48, 38, "-", COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_vm,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_volume(-10);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _lbl_set_vol = lv_label_create(row_vol);
+    lv_obj_set_pos(_lbl_set_vol, 164, 19);
+    lv_obj_set_width(_lbl_set_vol, 72);
+    lv_obj_set_style_text_align(_lbl_set_vol, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_set_vol, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lbl_set_vol, lv_color_hex(COL_WHITE), 0);
+
+    lv_obj_t* btn_vp = make_btn(row_vol, 238, 9, 48, 38, "+", COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_vp,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_volume(10);
+        },
+        LV_EVENT_CLICKED, this);
+
+    refresh_settings_ui();
 }
 
 void AppMcp::destroy_ui()
 {
     if (_root) {
         lv_obj_delete(_root);
-        _root = nullptr;
+        _root           = nullptr;
+        _settings_panel = nullptr;
+        _lbl_set_pause  = nullptr;
+        _lbl_set_vol    = nullptr;
+        for (int i = 0; i < 3; ++i) _btn_sens[i] = nullptr;
     }
 }
 
@@ -1380,9 +1542,10 @@ void AppMcp::refresh_ui(uint32_t now)
     }
 
     if (_httpd_ok.load() && !ip.empty()) {
-        std::string hdr = "MCP  " + ip + "  V" + std::to_string(_volume.load());
+        char hdr[48];
+        std::snprintf(hdr, sizeof(hdr), "MCP %s  %.1fs", ip.c_str(), _silence_stop_ms.load() / 1000.0f);
         lv_obj_set_style_text_color(_lbl_ip, lv_color_hex(COL_TEAL), 0);
-        lv_label_set_text(_lbl_ip, hdr.c_str());
+        lv_label_set_text(_lbl_ip, hdr);
     } else {
         lv_obj_set_style_text_color(_lbl_ip, lv_color_hex(COL_YELLOW), 0);
         lv_label_set_text(_lbl_ip, "MCP  Connecting...");

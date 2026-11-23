@@ -66,6 +66,10 @@ private:
     void toggle_dictation();
     void toggle_auto_mode();
     void change_volume(int delta);
+    void change_pause_ms(int delta_ms);
+    void set_mic_sens(int sens);
+    void set_settings_open(bool open);
+    void refresh_settings_ui();
     void process_motion_cmds();
     void run_gesture_step(uint32_t now);
 
@@ -128,6 +132,9 @@ private:
     // Robot state & motion queue
     std::atomic<int> _face{static_cast<int>(FaceExpr::Calm)};
     std::atomic<int> _volume{75};
+    std::atomic<uint32_t> _silence_stop_ms{2000};
+    std::atomic<int> _mic_sens{1};  // 0=LOW, 1=MED, 2=HIGH
+    bool _settings_open = false;
     mutable std::mutex _motion_mtx;
     std::deque<MotionCmd> _motion_cmds;
     int _gesture_type      = 0;  // 0=none, 1=nod, 2=shake
@@ -163,4 +170,10 @@ private:
     lv_obj_t* _btn_auto     = nullptr;
     lv_obj_t* _lbl_auto     = nullptr;
     lv_obj_t* _lbl_vol      = nullptr;
+
+    // Settings overlay widgets
+    lv_obj_t* _settings_panel    = nullptr;
+    lv_obj_t* _lbl_set_pause     = nullptr;
+    lv_obj_t* _lbl_set_vol       = nullptr;
+    lv_obj_t* _btn_sens[3]       = {nullptr, nullptr, nullptr};
 };
