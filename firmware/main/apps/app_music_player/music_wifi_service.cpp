@@ -36,14 +36,13 @@ struct DefaultStation {
     const char* url;
 };
 
-// Built-in MP3 / AAC streams (plus custom stations from /sd/radio.txt)
+// Built-in MP3 / AAC streams (plus any custom stations added to /sd/radio.txt)
 constexpr DefaultStation DEFAULT_STATIONS[] = {
-    {"El Sol Bogota (RCN)", "http://mdstrm.com/audio/632c9b89aa9ace684913b815/icecast.audio"},
-    {"SomaFM Groove Salad", "http://ice1.somafm.com/groovesalad-128-mp3"},
-    {"SomaFM Vaporwaves",   "http://ice1.somafm.com/vaporwaves-128-mp3"},
-    {"SomaFM Lush Chill",   "http://ice1.somafm.com/lush-128-mp3"},
-    {"Radio Paradise",      "http://stream.radioparadise.com/mp3-128"},
-    {"SomaFM Drone Zone",   "http://ice1.somafm.com/dronezone-128-mp3"},
+    {"El Sol",          "http://mdstrm.com/audio/632c9b89aa9ace684913b815/icecast.audio"},
+    {"Olimpica Stereo", "http://playerservices.streamtheworld.com/api/livestream-redirect/OLP_BOGOTA.mp3"},
+    {"Tropicana",       "http://playerservices.streamtheworld.com/api/livestream-redirect/TROPICANA.mp3"},
+    {"Candela Estereo", "http://playerservices.streamtheworld.com/api/livestream-redirect/CANDELAESTEREO.mp3"},
+    {"Mix 92.9 FM",     "http://playerservices.streamtheworld.com/api/livestream-redirect/MIX_BOGOTA.mp3"},
 };
 
 bool is_sd_present()
