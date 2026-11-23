@@ -209,9 +209,9 @@ input[type=text],input[type=url],input[type=search]{width:100%;padding:10px 12px
 
 <div id="panRad" class="card panel">
   <div id="radioList" class="list" style="margin-bottom:14px"></div>
-  <div style="font-size:12px;color:var(--dim);margin-bottom:6px">Add Custom MP3 Stream (saved to /sd/radio.txt)</div>
-  <input id="rName" type="text" placeholder="Station name (e.g. LoFi Beats)">
-  <input id="rUrl" type="url" placeholder="http://... (direct MP3 stream URL)">
+  <div style="font-size:12px;color:var(--dim);margin-bottom:6px">Add Custom MP3 / AAC Stream (saved to /sd/radio.txt)</div>
+  <input id="rName" type="text" placeholder="Station name (e.g. El Sol)">
+  <input id="rUrl" type="url" placeholder="http://... (direct MP3 or AAC stream URL)">
   <button class="btn-full" onclick="addRadio()">Add Station</button>
   <div id="radMsg" class="msg"></div>
 </div>
@@ -746,6 +746,11 @@ bool MusicWifiService::is_radio_connected() const
     return _radio_connected.load();
 }
 
+bool MusicWifiService::is_radio_aac() const
+{
+    return _radio_is_aac.load();
+}
+
 bool MusicWifiService::is_radio_eof() const
 {
     return _radio_eof.load();
@@ -828,14 +833,18 @@ void MusicWifiService::worker_task_loop()
 
 void MusicWifiService::run_radio_stream(const std::string& initial_url)
 {
-    struct RedirectCapture {
+    struct HeaderCapture {
         std::string location;
+        std::string content_type;
     };
 
     auto event_cb = [](esp_http_client_event_t* evt) -> esp_err_t {
         if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->user_data && evt->header_key && evt->header_value) {
+            auto* cap = static_cast<HeaderCapture*>(evt->user_data);
             if (strcasecmp(evt->header_key, "location") == 0) {
-                static_cast<RedirectCapture*>(evt->user_data)->location = evt->header_value;
+                cap->location = evt->header_value;
+            } else if (strcasecmp(evt->header_key, "content-type") == 0) {
+                cap->content_type = evt->header_value;
             }
         }
         return ESP_OK;
@@ -855,11 +864,20 @@ void MusicWifiService::run_radio_stream(const std::string& initial_url)
     }
 
     std::string cur_url = initial_url;
+    // Convenience: convert Mediastream HLS URLs (mdstrm.com/audio/<id>/live.m3u8) to direct Icecast audio
+    if (cur_url.find("mdstrm.com/audio/") != std::string::npos) {
+        auto pos = cur_url.find("/live.m3u8");
+        if (pos != std::string::npos) {
+            cur_url.replace(pos, 10, "/icecast.audio");
+        }
+    }
+
     esp_http_client_handle_t client = nullptr;
     bool stream_ok = false;
+    _radio_is_aac  = false;
 
     for (int hop = 0; hop < 5 && _running.load() && !_radio_stop_req.load(); ++hop) {
-        RedirectCapture redir;
+        HeaderCapture cap;
         esp_http_client_config_t cfg = {};
         cfg.url                      = cur_url.c_str();
         cfg.method                   = HTTP_METHOD_GET;
@@ -870,7 +888,7 @@ void MusicWifiService::run_radio_stream(const std::string& initial_url)
         cfg.user_agent               = "StackChan-Music/1.0";
         cfg.disable_auto_redirect    = true;
         cfg.event_handler            = event_cb;
-        cfg.user_data                = &redir;
+        cfg.user_data                = &cap;
 
         client = esp_http_client_init(&cfg);
         if (!client) {
@@ -893,9 +911,9 @@ void MusicWifiService::run_radio_stream(const std::string& initial_url)
         esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
 
-        if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && !redir.location.empty()) {
-            mclog::tagInfo(TAG, "Radio redirect {} -> {}", status, redir.location);
-            cur_url = redir.location;
+        if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && !cap.location.empty()) {
+            mclog::tagInfo(TAG, "Radio redirect {} -> {}", status, cap.location);
+            cur_url = cap.location;
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
             client = nullptr;
@@ -911,6 +929,15 @@ void MusicWifiService::run_radio_stream(const std::string& initial_url)
             _radio_error = "HTTP " + std::to_string(status);
             break;
         }
+
+        std::string ct = cap.content_type;
+        for (char& c : ct) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (ct.find("aac") != std::string::npos || ct.find("mp4") != std::string::npos) {
+            _radio_is_aac = true;
+        }
+        mclog::tagInfo(TAG, "Radio Content-Type: '{}' (aac={})", cap.content_type, _radio_is_aac.load());
 
         stream_ok = true;
         break;

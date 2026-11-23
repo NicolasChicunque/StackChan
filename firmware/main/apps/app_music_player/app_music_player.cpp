@@ -21,6 +21,7 @@
 #include <settings.h>
 
 #include <cJSON.h>
+#include <esp_aac_dec.h>
 #include <esp_heap_caps.h>
 #include <esp_vfs_fat.h>
 #include <sdmmc_cmd.h>
@@ -764,6 +765,8 @@ void AppMusicPlayer::audio_task_loop()
     bool is_mp3          = false;
     bool is_radio        = false;
     bool radio_buffering = false;
+    int radio_codec      = 0;  // 0 = auto-detect, 1 = MP3, 2 = AAC (ADTS)
+    void* aac_dec        = nullptr;
 
     mp3dec_t* mp3d = static_cast<mp3dec_t*>(heap_caps_malloc(sizeof(mp3dec_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!mp3d) {
@@ -773,7 +776,8 @@ void AppMusicPlayer::audio_task_loop()
         mp3dec_init(mp3d);
     }
 
-    constexpr size_t MP3_BUF_SIZE = 16384;
+    constexpr size_t MP3_BUF_SIZE  = 16384;
+    constexpr size_t AAC_PCM_BYTES = 16384;
     uint8_t* mp3_buf = static_cast<uint8_t*>(heap_caps_malloc(MP3_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!mp3_buf) {
         mp3_buf = static_cast<uint8_t*>(std::malloc(MP3_BUF_SIZE));
@@ -783,6 +787,7 @@ void AppMusicPlayer::audio_task_loop()
     if (!mp3_pcm) {
         mp3_pcm = static_cast<int16_t*>(std::malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t)));
     }
+    int16_t* aac_pcm = static_cast<int16_t*>(heap_caps_malloc(AAC_PCM_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     uint8_t* wav_raw = static_cast<uint8_t*>(heap_caps_malloc(512 * 4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     int16_t* wav_pcm = static_cast<int16_t*>(heap_caps_malloc(512 * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     size_t mp3_buf_filled = 0;
@@ -868,12 +873,16 @@ void AppMusicPlayer::audio_task_loop()
             if (is_radio) {
                 is_mp3             = true;
                 radio_buffering    = true;
+                radio_codec        = 0;
                 base_start_ms      = 0;
                 played_out_samples = 0;
                 _elapsed_ms.store(0);
                 _decoded_bytes.store(0);
                 if (mp3d) {
                     mp3dec_init(mp3d);
+                }
+                if (aac_dec) {
+                    esp_aac_dec_reset(aac_dec);
                 }
             } else if (!path.empty() && probe.valid) {
                 file = std::fopen(path.c_str(), "rb");
@@ -935,6 +944,111 @@ void AppMusicPlayer::audio_task_loop()
                 }
                 radio_buffering = true;
                 vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
+
+            // Auto-detect AAC (ADTS) vs MP3 once headers or first bytes arrive
+            if (radio_codec == 0) {
+                if (_wifi_svc->is_radio_aac()) {
+                    radio_codec = 2;
+                } else {
+                    size_t scan_lim = std::min<size_t>(mp3_buf_filled, 512);
+                    for (size_t i = 0; i + 2 <= scan_lim; ++i) {
+                        if (mp3_buf[i] == 0xFF && (mp3_buf[i + 1] & 0xF6) == 0xF0) {
+                            radio_codec = 2;  // ADTS AAC sync (layer == 00)
+                            break;
+                        }
+                        if (mp3_buf[i] == 0xFF && (mp3_buf[i + 1] & 0xE0) == 0xE0 && (mp3_buf[i + 1] & 0x06) != 0) {
+                            radio_codec = 1;  // MPEG audio (MP3)
+                            break;
+                        }
+                    }
+                    if (radio_codec == 0) {
+                        radio_codec = 1;
+                    }
+                }
+                mclog::tagInfo(TAG, "Radio codec detected: {}", (radio_codec == 2) ? "AAC" : "MP3");
+            }
+
+            if (radio_codec == 2) {
+                if (!aac_dec) {
+                    esp_aac_dec_cfg_t aac_cfg = ESP_AAC_DEC_CONFIG_DEFAULT();
+                    aac_cfg.aac_plus_enable   = true;
+                    if (esp_aac_dec_open(&aac_cfg, sizeof(aac_cfg), &aac_dec) != ESP_AUDIO_ERR_OK) {
+                        mclog::tagError(TAG, "Failed to open AAC decoder");
+                        _playing.store(false);
+                        _track_eof.store(true);
+                        continue;
+                    }
+                }
+                if (!aac_pcm) {
+                    _playing.store(false);
+                    continue;
+                }
+
+                // Align to ADTS sync header (0xFF 0xF0..0xF9) before feeding decoder
+                if (mp3_buf_filled >= 2 && !(mp3_buf[0] == 0xFF && (mp3_buf[1] & 0xF6) == 0xF0)) {
+                    size_t sync_pos = mp3_buf_filled;
+                    for (size_t i = 1; i + 2 <= mp3_buf_filled; ++i) {
+                        if (mp3_buf[i] == 0xFF && (mp3_buf[i + 1] & 0xF6) == 0xF0) {
+                            sync_pos = i;
+                            break;
+                        }
+                    }
+                    if (sync_pos < mp3_buf_filled) {
+                        std::memmove(mp3_buf, mp3_buf + sync_pos, mp3_buf_filled - sync_pos);
+                        mp3_buf_filled -= sync_pos;
+                    } else {
+                        mp3_buf_filled = 0;
+                        continue;
+                    }
+                }
+
+                esp_audio_dec_in_raw_t raw      = {};
+                raw.buffer                      = mp3_buf;
+                raw.len                         = static_cast<uint32_t>(mp3_buf_filled);
+                esp_audio_dec_out_frame_t frame = {};
+                frame.buffer                    = reinterpret_cast<uint8_t*>(aac_pcm);
+                frame.len                       = AAC_PCM_BYTES;
+                esp_audio_dec_info_t dec_info   = {};
+
+                esp_audio_err_t ret = esp_aac_dec_decode(aac_dec, &raw, &frame, &dec_info);
+                if (raw.consumed > 0) {
+                    size_t consumed = std::min<size_t>(raw.consumed, mp3_buf_filled);
+                    if (consumed < mp3_buf_filled) {
+                        std::memmove(mp3_buf, mp3_buf + consumed, mp3_buf_filled - consumed);
+                        mp3_buf_filled -= consumed;
+                    } else {
+                        mp3_buf_filled = 0;
+                    }
+                    _decoded_bytes.fetch_add(static_cast<uint32_t>(consumed));
+                }
+
+                if (ret == ESP_AUDIO_ERR_OK && frame.decoded_size > 0) {
+                    int ch        = (dec_info.channel > 0) ? dec_info.channel : 2;
+                    uint32_t sr   = (dec_info.sample_rate > 0) ? dec_info.sample_rate : 44100;
+                    int out_frms  = static_cast<int>(frame.decoded_size / (ch * sizeof(int16_t)));
+                    if (out_frms > 0) {
+                        resample_and_output(aac_pcm, out_frms, ch, sr);
+                    }
+                } else if (raw.consumed == 0) {
+                    if (_wifi_svc->is_radio_eof()) {
+                        mp3_buf_filled = 0;
+                        _playing.store(false);
+                        _track_eof.store(true);
+                        continue;
+                    }
+                    size_t got = _wifi_svc->pop_radio_bytes(mp3_buf + mp3_buf_filled, MP3_BUF_SIZE - mp3_buf_filled);
+                    mp3_buf_filled += got;
+                    if (got == 0) {
+                        if (mp3_buf_filled >= 2048) {
+                            // Drop 1 byte to resync if stuck on malformed sync word
+                            std::memmove(mp3_buf, mp3_buf + 1, --mp3_buf_filled);
+                        } else {
+                            vTaskDelay(pdMS_TO_TICKS(15));
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -1079,6 +1193,13 @@ void AppMusicPlayer::audio_task_loop()
     close_file();
     if (audio_codec && audio_codec->output_enabled()) {
         audio_codec->EnableOutput(false);
+    }
+    if (aac_dec) {
+        esp_aac_dec_close(aac_dec);
+        aac_dec = nullptr;
+    }
+    if (aac_pcm) {
+        heap_caps_free(aac_pcm);
     }
     if (mp3d) {
         heap_caps_free(mp3d);
