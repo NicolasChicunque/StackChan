@@ -1,20 +1,19 @@
-## MicroSD Music Player (`MUSIC`) — Custom Firmware Feature
+## MicroSD Music Player (`MUSIC`), Internet Radio & Gemini Live — Custom Firmware
 
-This fork adds a native **MicroSD Music Player (`MUSIC`)** app integrated directly into the StackChan ESP-IDF v6.1 firmware launcher alongside `AI.AGENT`, `AVATAR`, `DANCE`, and `SETUP`:
+This fork adds a native **MicroSD Music Player + Internet Radio + Web Remote (`MUSIC`)** and a direct **Gemini Live (`GEMINI`)** voice assistant to the StackChan ESP-IDF v6.1 firmware launcher alongside `AI.AGENT`, `AVATAR`, `DANCE`, and `SETUP`:
 
 - **Offline audio playback**: Plays `.wav` (PCM 8/16-bit, mono/stereo) and `.mp3` files from a FAT32 microSD card mounted at `/sd` (recursive scan up to 3 levels deep, PSRAM-backed track index supporting 1,000+ songs).
-- **Minimalist touch UI**: Top status header (track title, battery indicator, touch-seekable progress bar, elapsed/total time, volume), animated StackChan face with floating musical notes, and a clean 6-button control bar (`VOL-`, `Prev`, `Play/Pause`, `Next`, `VOL+`, `Settings`).
-- **Dedicated Settings & Playlist views**: Configure `LOOP` (`OFF` / `1` / `ALL`), `SHUFFLE`, `LIGHTS` (12 RGB LEDs synced to the beat), `MOVE` (rhythm head sway), browse the paginated `PLAYLIST`, and calibrate the neutral `HEAD` angle.
+- **Internet Radio over Wi-Fi**: Streams live HTTP/HTTPS MP3 radio stations directly inside `MUSIC -> Settings -> RADIO` with a 96 KB PSRAM prefetch ring buffer. Includes built-in stations and supports custom `Name|URL` entries in `/sd/radio.txt`.
+- **Web Remote, QR Code & Wi-Fi MP3 Upload**: Open `MUSIC -> Settings -> WEB/QR` to launch a local web server (`http://<device-ip>/`) with a scannable QR code. From any phone or PC browser on the same Wi-Fi, search/play SD tracks, control transport/volume/lights/motion, play or add radio stations, and upload `.mp3`/`.wav` files directly to `/sd/`.
+- **Minimalist touch UI**: Top status header (track/station title, battery indicator, touch-seekable progress bar, elapsed/total time, volume), animated avatar with floating musical notes, and a clean 6-button control bar (`VOL-`, `Prev`, `Play/Pause`, `Next`, `VOL+`, `Settings`).
 - **Persistent preferences**: Volume, playback toggles, head calibration, and the last played track are automatically saved to NVS and restored on next launch.
 - **Menu visibility toggle**: Can be shown or hidden from `SETUP -> Apps -> App visibility`.
 
 > **Quick start**: Format a microSD card as FAT32, copy your `.mp3` or `.wav` files to the card, insert it into CoreS3, build & flash `firmware/` with ESP-IDF v6.1 (see [firmware/README.md](firmware/README.md)), and open **MUSIC** from the launcher.
 
-> **Transparency note**: This feature was built through AI-assisted development (*vibe coding*) and iteratively tested on physical StackChan hardware (M5Stack CoreS3, ESP-IDF v6.1). Code reviews, suggestions, and improvements from the community are very welcome.
-
 ### Personal Branch Customization (`custom/naruto`)
 
-This branch builds on `feat/music-player` and adds a custom 7-state Naruto pixel-art sprite set (`Calm`, `Thinking`, `Happy`, `Sleepy`, `Shy`, `Smug`, `Pouty`) cached in PSRAM for smooth voice playback, with a live NVS-persisted **Classic / Naruto** avatar toggle in both `SETUP -> Device -> Avatar` and `MUSIC -> Settings` (synced across `AI.AGENT` and `MUSIC`). For a clean, upstream-ready firmware without custom character sprites, switch to `feat/music-player`.
+This branch combines `feat/music-player`, `feat/music-wifi`, and `feat/gemini-live`, and adds a custom 7-state Naruto pixel-art sprite set (`Calm`, `Thinking`, `Happy`, `Sleepy`, `Shy`, `Smug`, `Pouty`) cached in PSRAM for smooth voice playback, with a live NVS-persisted **Classic / Naruto** avatar toggle in both `SETUP -> Device -> Avatar` and `MUSIC -> Settings` (synced across `AI.AGENT`, `GEMINI`, and `MUSIC`).
 
 ----
 
@@ -40,8 +39,7 @@ The **factory firmware** is feature-rich, including an AI Agent, lively and expr
 
 The firmware also includes a built-in **Gemini Live (`GEMINI`)** app that connects directly over Wi-Fi (`WSS`) to the Google Gemini Live API (`gemini-3.8-live`) with no external server required:
 
-- **Direct speech-to-speech**: Streams 16 kHz PCM microphone audio and plays back 24 kHz PCM voice replies with live captions (`outputAudioTranscription`), animated face, and RGB status LEDs.
-- **Tap-to-talk (Free Tier friendly)**: Uses manual activity signals (`activityStart` / `activityEnd`) so audio tokens are only sent while talking, avoiding acoustic echo and conserving Google AI Studio free-tier quota.
+- **Direct speech-to-speech**: Streams 16 kHz PCM microphone audio with hands-free adaptive VAD (auto-sends after a natural pause) and plays back 24 kHz PCM voice replies with configurable voice & pitch, live captions, animated face, and RGB status LEDs.
 - **Simple API key setup**: Save a free Google AI Studio API key in `/sd/gemini.txt` on a FAT32 microSD card (automatically cached in NVS on first open; optional second line overrides the model ID).
 - **Menu visibility toggle**: Can be shown or hidden from `SETUP -> Apps -> App visibility`.
 

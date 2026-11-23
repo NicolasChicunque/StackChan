@@ -4,12 +4,14 @@
  * SPDX-License-Identifier: MIT
  */
 #pragma once
+#include "music_wifi_service.h"
 #include <mooncake.h>
 #include <smooth_ui_toolkit.hpp>
 #include <smooth_lvgl.hpp>
 #include <lvgl.h>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <esp_heap_caps.h>
 #include <memory>
 #include <mutex>
@@ -71,6 +73,8 @@ private:
         Settings,
         List,
         Head,
+        Radio,
+        WebQr,
     };
 
     struct TrackEntry {
@@ -112,11 +116,13 @@ private:
     void audio_task_loop();
 
     void play_track(int idx, int32_t start_ms = 0);
+    void play_radio(int station_idx);
     void toggle_play();
     void stop_playback();
     void seek_to(int32_t ms);
     void change_track(int delta);
     void change_volume(int delta);
+    void set_volume(int vol);
     void cycle_loop();
     void toggle_move();
     void toggle_lights();
@@ -124,6 +130,15 @@ private:
     void toggle_avatar_style();
     int random_index() const;
     void track_finished();
+
+    /* --------------------- Wi-Fi Radio & Web Remote ----------------------- */
+    void init_wifi_service();
+    void process_web_commands();
+    std::string build_status_json() const;
+    std::string build_tracks_json(const std::string& q, int page, int limit) const;
+    bool handle_begin_sd_write();
+    void handle_end_sd_write(bool success, const std::string& filename);
+    void update_now_playing_title();
 
     /* ---------------------- Robot & NVS Persistence ----------------------- */
     void load_saved_prefs();
@@ -143,6 +158,8 @@ private:
     void destroy_ui();
     void switch_mode(ScreenMode new_mode);
     void open_list();
+    void open_radio();
+    void open_web_qr();
 
     void refresh_main_ui(uint32_t now);
     void refresh_button_styles();
@@ -152,6 +169,8 @@ private:
     void refresh_avatar_anim(uint32_t now);
     void refresh_list_ui();
     void refresh_head_ui();
+    void refresh_radio_ui();
+    void refresh_web_qr_ui();
 
     /* ------------------------------ State --------------------------------- */
     bool _sd_mounted          = false;
@@ -162,11 +181,25 @@ private:
     int _scan_other_n         = 0;
     std::string _scan_first_err;
 
+    mutable std::mutex _tracks_mutex;
     std::vector<TrackEntry, PsramAllocator<TrackEntry>> _tracks;
     int _index                = 0;
     int _list_page            = 0;
+    int _radio_index          = 0;
+    int _radio_page           = 0;
     std::string _saved_track_path;
     int _saved_track_idx      = 0;
+
+    // Wi-Fi Radio & Web Remote
+    std::unique_ptr<MusicWifiService> _wifi_svc;
+    std::atomic<bool> _radio_mode{false};
+    std::atomic<bool> _sd_upload_active{false};
+    mutable std::mutex _cmd_mutex;
+    std::deque<MusicWifiService::WebCommand> _web_cmds;
+    std::string _uploaded_notice;
+    mutable std::mutex _title_mutex;
+    std::string _now_playing_title;
+    std::string _last_qr_url;
 
     // Persistent player preferences
     int _volume               = 60;
@@ -198,6 +231,8 @@ private:
     std::atomic<bool> _started{false};
     std::atomic<bool> _track_eof{false};
     std::atomic<bool> _cmd_reload{false};
+    std::atomic<bool> _cmd_close_file{false};
+    std::atomic<bool> _audio_file_open{false};
     std::atomic<int32_t> _elapsed_ms{0};
     std::atomic<int32_t> _duration_ms{0};
     std::atomic<uint32_t> _byte_rate{0};
@@ -205,6 +240,7 @@ private:
 
     std::string _active_path;
     bool _active_is_mp3       = false;
+    bool _active_is_radio     = false;
     int32_t _target_start_ms  = 0;
     AudioProbeInfo _active_probe;
 
@@ -249,7 +285,7 @@ private:
 
     // 2. Settings view
     lv_obj_t* _settings_cont  = nullptr;
-    BtnWidget _cfg_btns[8];   // loop, shuf, lights, move, playlist, head, avatar, menu
+    BtnWidget _cfg_btns[9];   // loop, shuf, lights, move, playlist, radio, web, head, avatar
 
     // 3. Playlist view
     lv_obj_t* _list_cont        = nullptr;
@@ -273,4 +309,20 @@ private:
     lv_obj_t* _btn_head_minus   = nullptr;
     lv_obj_t* _btn_head_plus    = nullptr;
     lv_obj_t* _btn_head_save    = nullptr;
+
+    // 5. Internet Radio view
+    lv_obj_t* _radio_cont        = nullptr;
+    lv_obj_t* _lbl_radio_hdr     = nullptr;
+    lv_obj_t* _lbl_radio_count   = nullptr;
+    lv_obj_t* _radio_rows[5]     = {nullptr};
+    lv_obj_t* _radio_row_lbls[5] = {nullptr};
+    lv_obj_t* _lbl_radio_info    = nullptr;
+
+    // 6. Web Remote / QR view
+    lv_obj_t* _web_cont          = nullptr;
+    lv_obj_t* _web_qr_box        = nullptr;
+    lv_obj_t* _web_qr            = nullptr;
+    lv_obj_t* _lbl_web_status    = nullptr;
+    lv_obj_t* _lbl_web_url       = nullptr;
+    lv_obj_t* _lbl_web_hint      = nullptr;
 };
