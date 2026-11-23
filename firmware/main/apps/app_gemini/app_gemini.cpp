@@ -1184,7 +1184,7 @@ void AppGemini::spk_task_loop()
     constexpr size_t kOutSamples = 480;   // 20 ms @ 24 kHz
     std::vector<int16_t> resample_buf;
     resample_buf.reserve(1024);
-    std::vector<int16_t> pull_buf(512);
+    std::vector<int16_t> pull_buf(768);
     std::vector<int16_t> chunk(kOutSamples);
     double frac_pos    = 0.0;
     bool output_active = false;
@@ -1224,7 +1224,8 @@ void AppGemini::spk_task_loop()
                 frac_pos = 0.0;
             } else {
                 // Ensure enough zero-padded tail when draining at end of turn
-                if (resample_buf.size() < need) {
+                const bool was_padded_tail = (resample_buf.size() < need);
+                if (was_padded_tail) {
                     resample_buf.resize(need, 0);
                 }
                 for (size_t i = 0; i < kOutSamples; ++i) {
@@ -1237,7 +1238,7 @@ void AppGemini::spk_task_loop()
                 }
                 size_t consumed = static_cast<size_t>(frac_pos);
                 frac_pos -= static_cast<double>(consumed);
-                if (consumed >= resample_buf.size()) {
+                if (was_padded_tail || consumed >= resample_buf.size()) {
                     resample_buf.clear();
                     frac_pos = 0.0;
                 } else {
