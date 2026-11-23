@@ -64,6 +64,7 @@ private:
     void play_wav_url(const std::string& url);
     void stop_current_playback();
     void toggle_dictation();
+    void toggle_auto_mode();
     void change_volume(int delta);
     void process_motion_cmds();
     void run_gesture_step(uint32_t now);
@@ -109,11 +110,14 @@ private:
     mutable std::mutex _play_mtx;
     std::string _next_play_url;
 
-    // Dictation recording (DICTATE -> GET /audio/status + GET /audio)
+    // Dictation recording (AUTO hands-free or DICTATE -> GET /audio/status + GET /audio)
+    std::atomic<bool> _auto_mode{true};
     std::atomic<bool> _rec_start_req{false};
     std::atomic<bool> _rec_stop_req{false};
     std::atomic<bool> _rec_active{false};
+    std::atomic<bool> _rec_speaking{false};
     std::atomic<bool> _rec_ready{false};
+    std::atomic<uint32_t> _auto_hold_until_ms{0};
     std::atomic<int> _mic_level{0};
     mutable std::mutex _rec_mtx;
     uint8_t* _rec_wav_buf  = nullptr;
@@ -155,5 +159,7 @@ private:
     lv_obj_t* _bar_level    = nullptr;
     lv_obj_t* _btn_dictate  = nullptr;
     lv_obj_t* _lbl_dictate  = nullptr;
+    lv_obj_t* _btn_auto     = nullptr;
+    lv_obj_t* _lbl_auto     = nullptr;
     lv_obj_t* _lbl_vol      = nullptr;
 };

@@ -40,11 +40,14 @@ namespace {
 constexpr const char* TAG            = "MCP";
 constexpr const char* NVS_NS         = "mcp_bridge";
 constexpr const char* KEY_VOL        = "volume";
+constexpr const char* KEY_AUTO       = "auto_mode";
 constexpr int W                      = 320;
 constexpr int H                      = 240;
 constexpr int Y_HOME_DEG             = 45;
 constexpr uint32_t REC_SAMPLE_RATE   = 16000;
-constexpr size_t REC_MAX_SECONDS     = 14;
+constexpr size_t REC_MAX_SECONDS     = 30;
+constexpr uint32_t SILENCE_STOP_MS   = 2600;
+constexpr size_t PREROLL_CHUNKS      = 8;  // 8 * 40 ms = 320 ms pre-roll
 constexpr size_t REC_HEADER_BYTES    = 44;
 constexpr size_t REC_BUF_BYTES       = REC_HEADER_BYTES + REC_SAMPLE_RATE * 2 * REC_MAX_SECONDS;
 
@@ -201,21 +204,24 @@ void AppMcp::onOpen()
     _play_pending    = false;
     _play_started_ms = 0;
     _speak_rms       = 0;
-    _rec_start_req   = false;
-    _rec_stop_req    = false;
-    _rec_active      = false;
-    _rec_ready       = false;
-    _rec_wav_bytes   = 0;
-    _mic_level       = 0;
-    _face            = static_cast<int>(FaceExpr::Calm);
-    _gesture_type    = 0;
-    _shown_naruto_idx = -1;
+    _rec_start_req       = false;
+    _rec_stop_req        = false;
+    _rec_active          = false;
+    _rec_speaking        = false;
+    _rec_ready           = false;
+    _rec_wav_bytes       = 0;
+    _auto_hold_until_ms  = 0;
+    _mic_level           = 0;
+    _face                = static_cast<int>(FaceExpr::Calm);
+    _gesture_type        = 0;
+    _shown_naruto_idx    = -1;
 
-    // Load saved speaker volume
+    // Load saved speaker volume & auto hands-free preference
     {
         Settings s(NVS_NS, false);
-        int v   = s.GetInt(KEY_VOL, 75);
-        _volume = std::clamp(v, 10, 100);
+        int v      = s.GetInt(KEY_VOL, 75);
+        _volume    = std::clamp(v, 10, 100);
+        _auto_mode = s.GetBool(KEY_AUTO, true);
     }
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume.load()), false);
 
@@ -429,19 +435,31 @@ void AppMcp::mic_task_loop()
     std::vector<int16_t> mono_16k;
 
     while (_running.load()) {
-        if (!_rec_start_req.exchange(false)) {
-            vTaskDelay(pdMS_TO_TICKS(25));
+        bool manual_req = _rec_start_req.exchange(false);
+        uint32_t now_t  = GetHAL().millis();
+        bool auto_ready = _wifi_ok.load() && _httpd_ok.load() && _auto_mode.load() &&
+                          !_playing.load() && !_play_pending.load() && !_rec_ready.load() &&
+                          static_cast<int32_t>(now_t - _auto_hold_until_ms.load()) >= 0;
+
+        if (!manual_req && !auto_ready) {
+            vTaskDelay(pdMS_TO_TICKS(35));
             continue;
         }
         if (!audio_codec || !_rec_wav_buf || _rec_wav_cap <= REC_HEADER_BYTES) {
             set_status_text("Mic unavailable");
+            vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
 
         // Stop any active playback before opening mic (half-duplex safety)
-        _play_abort = true;
-        for (int i = 0; i < 40 && _playing.load(); ++i) {
-            vTaskDelay(pdMS_TO_TICKS(15));
+        if (manual_req) {
+            _play_abort = true;
+            for (int i = 0; i < 40 && _playing.load(); ++i) {
+                vTaskDelay(pdMS_TO_TICKS(15));
+            }
+        }
+        if (_playing.load() || _play_pending.load()) {
+            continue;
         }
         if (audio_codec->output_enabled()) {
             audio_codec->EnableOutput(false);
@@ -450,95 +468,139 @@ void AppMcp::mic_task_loop()
             audio_codec->EnableInput(true);
         }
 
-        const size_t in_ch     = static_cast<size_t>(std::max(audio_codec->input_channels(), 1));
-        const uint32_t in_rate = static_cast<uint32_t>(std::max(audio_codec->input_sample_rate(), 16000));
-        // Read 40 ms chunks at codec input rate (e.g. 960 frames @ 24 kHz)
+        const size_t in_ch      = static_cast<size_t>(std::max(audio_codec->input_channels(), 1));
+        const uint32_t in_rate  = static_cast<uint32_t>(std::max(audio_codec->input_sample_rate(), 16000));
         const size_t in_frames  = (in_rate * 40) / 1000;
-        const size_t out_frames = (REC_SAMPLE_RATE * 40) / 1000;
+        const size_t out_frames = (REC_SAMPLE_RATE * 40) / 1000;  // 640 samples (40 ms @ 16 kHz)
         raw_in.resize(in_frames * in_ch);
         mono_16k.resize(out_frames);
 
+        // Circular 320 ms pre-roll ring so the first syllable is never clipped
+        std::vector<int16_t> preroll(PREROLL_CHUNKS * out_frames, 0);
+        size_t preroll_head  = 0;
+        size_t preroll_count = 0;
+
         _rec_stop_req = false;
-        _rec_ready    = false;
+        if (manual_req) {
+            _rec_ready = false;
+        }
         _rec_active   = true;
+        _rec_speaking = false;
         _mic_level    = 0;
-        set_status_text("Listening... speak now");
-        GetHAL().showRgbColor(80, 12, 12);
+        set_status_text(_auto_mode.load() ? "Hands-free: speak anytime" : "Listening... speak now");
+        GetHAL().showRgbColor(0, 52, 46);
 
         size_t pcm_pos       = 0;
         size_t max_pcm_bytes = _rec_wav_cap - REC_HEADER_BYTES;
-        uint32_t start_ms    = GetHAL().millis();
-        uint32_t last_voice  = start_ms;
-        bool speech_heard    = false;
-        float noise_floor    = 180.0f;
-        int warmup_frames    = 0;
+        uint32_t speech_start_ms = 0;
+        uint32_t last_voice_ms   = 0;
+        bool speech_heard        = false;
+        int speech_streak        = 0;
+        float noise_floor        = 200.0f;
+        int warmup_frames        = 0;
 
-        {
-            std::lock_guard<std::mutex> lk(_rec_mtx);
-            while (_running.load() && !_rec_stop_req.load() && pcm_pos + out_frames * 2 <= max_pcm_bytes) {
-                if (!audio_codec->InputData(raw_in)) {
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    continue;
-                }
-
-                // Extract mic ch0 and resample in_rate (e.g. 24 kHz) -> 16 kHz mono + RMS
-                uint64_t sum_sq = 0;
-                for (size_t i = 0; i < out_frames; ++i) {
-                    size_t src_i = std::min<size_t>((i * in_rate) / REC_SAMPLE_RATE, in_frames - 1);
-                    int16_t s    = raw_in[src_i * in_ch];
-                    mono_16k[i]  = s;
-                    sum_sq += static_cast<uint64_t>(static_cast<int32_t>(s) * static_cast<int32_t>(s));
-                }
-                int rms = static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / out_frames));
-                _mic_level.store(std::clamp(rms / 35, 0, 100));
-
-                std::memcpy(_rec_wav_buf + REC_HEADER_BYTES + pcm_pos, mono_16k.data(), out_frames * sizeof(int16_t));
-                pcm_pos += out_frames * sizeof(int16_t);
-
-                uint32_t now = GetHAL().millis();
-                if (warmup_frames < 6) {
-                    noise_floor = noise_floor * 0.8f + rms * 0.2f;
-                    ++warmup_frames;
-                    continue;
-                }
-
-                float thresh = std::max(420.0f, noise_floor * 2.6f);
-                if (rms > thresh) {
-                    speech_heard = true;
-                    last_voice   = now;
-                } else if (!speech_heard) {
-                    noise_floor = noise_floor * 0.95f + rms * 0.05f;
-                }
-
-                // Auto-stop after 1.8s silence once user spoke (or 14s cap)
-                if (speech_heard && (now - last_voice) >= 1800 && (now - start_ms) >= 1000) {
-                    break;
-                }
-                if ((now - start_ms) >= REC_MAX_SECONDS * 1000) {
-                    break;
-                }
+        while (_running.load() && !_rec_stop_req.load() && !_play_pending.load() && !_playing.load()) {
+            // If user turned AUTO off while silently waiting (no speech yet), exit standby cleanly
+            if (!manual_req && !_auto_mode.load() && !speech_heard) {
+                break;
+            }
+            if (!audio_codec->InputData(raw_in)) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
             }
 
-            if (pcm_pos >= 3200) {
-                write_wav_header(_rec_wav_buf, static_cast<uint32_t>(pcm_pos), REC_SAMPLE_RATE);
-                _rec_wav_bytes = REC_HEADER_BYTES + pcm_pos;
-                _rec_ready     = true;
+            // Extract mic ch0 and resample in_rate (24 kHz) -> 16 kHz mono + RMS
+            uint64_t sum_sq = 0;
+            for (size_t i = 0; i < out_frames; ++i) {
+                size_t src_i = std::min<size_t>((i * in_rate) / REC_SAMPLE_RATE, in_frames - 1);
+                int16_t s    = raw_in[src_i * in_ch];
+                mono_16k[i]  = s;
+                sum_sq += static_cast<uint64_t>(static_cast<int32_t>(s) * static_cast<int32_t>(s));
+            }
+            int rms = static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / out_frames));
+            _mic_level.store(std::clamp(rms / 35, 0, 100));
+
+            uint32_t now = GetHAL().millis();
+            if (warmup_frames < 6) {
+                noise_floor = noise_floor * 0.78f + rms * 0.22f;
+                ++warmup_frames;
+                continue;
+            }
+
+            float thresh = std::max(460.0f, noise_floor * 2.7f);
+            if (!speech_heard) {
+                // Store chunk in pre-roll ring while waiting for voice
+                std::memcpy(preroll.data() + preroll_head * out_frames, mono_16k.data(),
+                            out_frames * sizeof(int16_t));
+                preroll_head = (preroll_head + 1) % PREROLL_CHUNKS;
+                if (preroll_count < PREROLL_CHUNKS) {
+                    ++preroll_count;
+                }
+
+                if (rms > thresh) {
+                    if (++speech_streak >= 2) {
+                        speech_heard    = true;
+                        speech_start_ms = now;
+                        last_voice_ms   = now;
+                        _rec_speaking   = true;
+                        set_status_text("Hearing you... (pause to send)");
+                        GetHAL().showRgbColor(88, 12, 12);
+
+                        // Flush pre-roll into PSRAM WAV buffer under lock
+                        std::lock_guard<std::mutex> lk(_rec_mtx);
+                        size_t start_slot = (preroll_head + PREROLL_CHUNKS - preroll_count) % PREROLL_CHUNKS;
+                        for (size_t k = 0; k < preroll_count && pcm_pos + out_frames * 2 <= max_pcm_bytes; ++k) {
+                            size_t slot = (start_slot + k) % PREROLL_CHUNKS;
+                            std::memcpy(_rec_wav_buf + REC_HEADER_BYTES + pcm_pos,
+                                        preroll.data() + slot * out_frames, out_frames * sizeof(int16_t));
+                            pcm_pos += out_frames * sizeof(int16_t);
+                        }
+                    }
+                } else {
+                    speech_streak = 0;
+                    noise_floor   = noise_floor * 0.96f + rms * 0.04f;
+                }
+                continue;
+            }
+
+            // Speech active: append PCM chunk to PSRAM buffer
+            if (pcm_pos + out_frames * 2 <= max_pcm_bytes) {
+                std::lock_guard<std::mutex> lk(_rec_mtx);
+                std::memcpy(_rec_wav_buf + REC_HEADER_BYTES + pcm_pos, mono_16k.data(),
+                            out_frames * sizeof(int16_t));
+                pcm_pos += out_frames * sizeof(int16_t);
             } else {
-                _rec_wav_bytes = 0;
-                _rec_ready     = false;
+                break;  // Reached 30s max cap
+            }
+
+            if (rms > thresh * 0.85f) {
+                last_voice_ms = now;
+            }
+
+            // Auto-stop after 2.6s of silence following speech
+            if ((now - last_voice_ms) >= SILENCE_STOP_MS && (now - speech_start_ms) >= 900) {
+                break;
+            }
+            if ((now - speech_start_ms) >= REC_MAX_SECONDS * 1000) {
+                break;
             }
         }
 
         if (audio_codec->input_enabled()) {
             audio_codec->EnableInput(false);
         }
-        _mic_level  = 0;
-        _rec_active = false;
+        _mic_level    = 0;
+        _rec_speaking = false;
+        _rec_active   = false;
 
-        if (_rec_ready.load()) {
-            set_status_text("Dictation ready for MCP!");
+        if (speech_heard && pcm_pos >= 4800 && !_play_pending.load() && !_playing.load()) {
+            std::lock_guard<std::mutex> lk(_rec_mtx);
+            write_wav_header(_rec_wav_buf, static_cast<uint32_t>(pcm_pos), REC_SAMPLE_RATE);
+            _rec_wav_bytes = REC_HEADER_BYTES + pcm_pos;
+            _rec_ready     = true;
+            set_status_text("Sending voice to Antigravity...");
             GetHAL().showRgbColor(0, 72, 24);
-        } else {
+        } else if (!_playing.load() && !_play_pending.load()) {
             set_status_text("MCP Ready - Antigravity");
             GetHAL().showRgbColor(0, 48, 42);
         }
@@ -724,9 +786,11 @@ void AppMcp::play_wav_url(const std::string& url)
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
-    _speak_rms = 0;
-    _playing   = false;
-    set_status_text(_rec_ready.load() ? "Dictation ready for MCP!" : "MCP Ready - Antigravity");
+    _speak_rms          = 0;
+    _playing            = false;
+    _auto_hold_until_ms = GetHAL().millis() + 650;
+    set_status_text(_rec_ready.load() ? "Sending voice to Antigravity..."
+                                      : (_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity"));
     GetHAL().showRgbColor(0, 48, 42);
 }
 
@@ -742,6 +806,18 @@ void AppMcp::toggle_dictation()
     } else {
         _rec_start_req = true;
     }
+}
+
+void AppMcp::toggle_auto_mode()
+{
+    bool next  = !_auto_mode.load();
+    _auto_mode = next;
+    Settings s(NVS_NS, true);
+    s.SetBool(KEY_AUTO, next);
+    if (!next && _rec_active.load() && !_rec_speaking.load()) {
+        _rec_stop_req = true;
+    }
+    set_status_text(next ? "Hands-free AUTO ON" : "Manual DICTATE mode");
 }
 
 void AppMcp::change_volume(int delta)
@@ -916,9 +992,12 @@ int AppMcp::handle_audio_get(httpd_req* req)
     }
     httpd_resp_send_chunk(req, nullptr, 0);
 
-    self->_rec_ready     = false;
-    self->_rec_wav_bytes = 0;
-    self->set_status_text("Sent dictation to MCP!");
+    self->_rec_ready          = false;
+    self->_rec_wav_bytes      = 0;
+    self->_face               = static_cast<int>(FaceExpr::Thinking);
+    self->_auto_hold_until_ms = GetHAL().millis() + 2500;
+    self->set_status_text("Antigravity thinking...");
+    GetHAL().showRgbColor(64, 42, 0);
     return ESP_OK;
 }
 
@@ -1171,20 +1250,37 @@ void AppMcp::build_ui()
     lv_obj_set_size(_bar_level, 0, 4);
     style_box(_bar_level, COL_TEAL, 2);
 
-    // Bottom bar: DICTATE | VOL- | VOL+ | EXIT
+    // Bottom bar: DICTATE | AUTO | V- | V+ | EXIT
     _btn_dictate = lv_button_create(_root);
     lv_obj_set_pos(_btn_dictate, 8, 186);
-    lv_obj_set_size(_btn_dictate, 144, 44);
+    lv_obj_set_size(_btn_dictate, 108, 44);
     style_box(_btn_dictate, COL_TEAL_DK, 10);
     _lbl_dictate = lv_label_create(_btn_dictate);
     lv_obj_center(_lbl_dictate);
-    lv_obj_set_style_text_font(_lbl_dictate, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(_lbl_dictate, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
-    lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " DICTATE");
+    lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " TALK");
     lv_obj_add_event_cb(
         _btn_dictate,
         [](lv_event_t* e) {
             static_cast<AppMcp*>(lv_event_get_user_data(e))->toggle_dictation();
+        },
+        LV_EVENT_CLICKED, this);
+
+    _btn_auto = lv_button_create(_root);
+    lv_obj_set_pos(_btn_auto, 120, 186);
+    lv_obj_set_size(_btn_auto, 62, 44);
+    style_box(_btn_auto, COL_GREEN, 10);
+    _lbl_auto = lv_label_create(_btn_auto);
+    lv_obj_center(_lbl_auto);
+    lv_obj_set_style_text_align(_lbl_auto, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_auto, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_auto, lv_color_hex(COL_WHITE), 0);
+    lv_label_set_text(_lbl_auto, "AUTO\nON");
+    lv_obj_add_event_cb(
+        _btn_auto,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->toggle_auto_mode();
         },
         LV_EVENT_CLICKED, this);
 
@@ -1201,7 +1297,7 @@ void AppMcp::build_ui()
         return b;
     };
 
-    lv_obj_t* btn_vd = make_btn(156, 48, "VOL-", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_vd = make_btn(186, 36, "V-", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_vd,
         [](lv_event_t* e) {
@@ -1209,7 +1305,7 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_vu = make_btn(208, 48, "VOL+", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_vu = make_btn(226, 36, "V+", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_vu,
         [](lv_event_t* e) {
@@ -1217,7 +1313,7 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_exit = make_btn(260, 52, "EXIT", COL_CARD_HI, COL_YELLOW);
+    lv_obj_t* btn_exit = make_btn(266, 46, "EXIT", COL_CARD_HI, COL_YELLOW);
     lv_obj_add_event_cb(
         btn_exit,
         [](lv_event_t* e) {
@@ -1264,14 +1360,27 @@ void AppMcp::refresh_ui(uint32_t now)
 
     lv_label_set_text(_lbl_status, st.c_str());
 
-    bool rec   = _rec_active.load();
-    bool ready = _rec_ready.load();
-    bool spk   = _playing.load();
+    bool rec     = _rec_active.load();
+    bool hearing = _rec_speaking.load();
+    bool ready   = _rec_ready.load();
+    bool spk     = _playing.load();
+    bool auto_on = _auto_mode.load();
 
-    if (rec) {
+    if (_btn_auto && _lbl_auto) {
+        lv_obj_set_style_bg_color(_btn_auto, lv_color_hex(auto_on ? COL_TEAL_DK : COL_CARD), 0);
+        lv_obj_set_style_text_color(_lbl_auto, lv_color_hex(auto_on ? COL_WHITE : COL_DIM), 0);
+        lv_label_set_text(_lbl_auto, auto_on ? "AUTO\nON" : "AUTO\nOFF");
+    }
+
+    if (rec && hearing) {
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_RED), 0);
-        lv_label_set_text(_lbl_dictate, LV_SYMBOL_STOP " STOP");
+        lv_label_set_text(_lbl_dictate, LV_SYMBOL_STOP " SEND");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_RED), 0);
+        lv_obj_set_width(_bar_level, (_mic_level.load() * 260) / 100);
+    } else if (rec) {
+        lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_TEAL_DK), 0);
+        lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " LISTENING");
+        lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_TEAL), 0);
         lv_obj_set_width(_bar_level, (_mic_level.load() * 260) / 100);
     } else if (spk) {
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_BLUE), 0);
@@ -1281,12 +1390,12 @@ void AppMcp::refresh_ui(uint32_t now)
         lv_obj_set_width(_bar_level, (lv * 260) / 100);
     } else if (ready) {
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_GREEN), 0);
-        lv_label_set_text(_lbl_dictate, LV_SYMBOL_OK " READY");
+        lv_label_set_text(_lbl_dictate, LV_SYMBOL_OK " SENDING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_GREEN), 0);
         lv_obj_set_width(_bar_level, 260);
     } else {
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_TEAL_DK), 0);
-        lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " DICTATE");
+        lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " TALK");
         lv_obj_set_width(_bar_level, 0);
     }
 }
