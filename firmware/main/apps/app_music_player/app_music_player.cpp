@@ -2406,12 +2406,12 @@ void AppMusicPlayer::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_exit_app = make_list_footer_btn(243, 69, "MENU", COL_ACCENT_DK);
+    _btn_exit_app = make_list_footer_btn(243, 69, "BACK", COL_PLAY_ON);
     lv_obj_add_event_cb(
         _btn_exit_app,
         [](lv_event_t* e) {
             auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
-            self->close();
+            self->switch_mode(ScreenMode::Main);
         },
         LV_EVENT_CLICKED, this);
 
