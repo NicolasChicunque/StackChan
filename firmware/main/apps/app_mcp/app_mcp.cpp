@@ -46,7 +46,7 @@ constexpr int H                      = 240;
 constexpr int Y_HOME_DEG             = 45;
 constexpr uint32_t REC_SAMPLE_RATE   = 16000;
 constexpr size_t REC_MAX_SECONDS     = 30;
-constexpr uint32_t SILENCE_STOP_MS   = 2600;
+constexpr uint32_t SILENCE_STOP_MS   = 1600;
 constexpr size_t PREROLL_CHUNKS      = 8;  // 8 * 40 ms = 320 ms pre-roll
 constexpr size_t REC_HEADER_BYTES    = 44;
 constexpr size_t REC_BUF_BYTES       = REC_HEADER_BYTES + REC_SAMPLE_RATE * 2 * REC_MAX_SECONDS;
@@ -496,7 +496,8 @@ void AppMcp::mic_task_loop()
         uint32_t last_voice_ms   = 0;
         bool speech_heard        = false;
         int speech_streak        = 0;
-        float noise_floor        = 200.0f;
+        int voiced_frames        = 0;
+        float noise_floor        = 220.0f;
         int warmup_frames        = 0;
 
         while (_running.load() && !_rec_stop_req.load() && !_play_pending.load() && !_playing.load()) {
@@ -527,7 +528,7 @@ void AppMcp::mic_task_loop()
                 continue;
             }
 
-            float thresh = std::max(460.0f, noise_floor * 2.7f);
+            float thresh = std::max(780.0f, noise_floor * 3.2f);
             if (!speech_heard) {
                 // Store chunk in pre-roll ring while waiting for voice
                 std::memcpy(preroll.data() + preroll_head * out_frames, mono_16k.data(),
@@ -538,10 +539,11 @@ void AppMcp::mic_task_loop()
                 }
 
                 if (rms > thresh) {
-                    if (++speech_streak >= 2) {
+                    if (++speech_streak >= 3) {
                         speech_heard    = true;
                         speech_start_ms = now;
                         last_voice_ms   = now;
+                        voiced_frames   = 3;
                         _rec_speaking   = true;
                         set_status_text("Hearing you... (pause to send)");
                         GetHAL().showRgbColor(88, 12, 12);
@@ -573,12 +575,13 @@ void AppMcp::mic_task_loop()
                 break;  // Reached 30s max cap
             }
 
-            if (rms > thresh * 0.85f) {
+            if (rms > thresh * 0.78f) {
                 last_voice_ms = now;
+                ++voiced_frames;
             }
 
-            // Auto-stop after 2.6s of silence following speech
-            if ((now - last_voice_ms) >= SILENCE_STOP_MS && (now - speech_start_ms) >= 900) {
+            // Auto-stop after 1.6s of silence following speech
+            if ((now - last_voice_ms) >= SILENCE_STOP_MS && (now - speech_start_ms) >= 800) {
                 break;
             }
             if ((now - speech_start_ms) >= REC_MAX_SECONDS * 1000) {
@@ -593,7 +596,7 @@ void AppMcp::mic_task_loop()
         _rec_speaking = false;
         _rec_active   = false;
 
-        if (speech_heard && pcm_pos >= 4800 && !_play_pending.load() && !_playing.load()) {
+        if (speech_heard && voiced_frames >= 5 && pcm_pos >= 6400 && !_play_pending.load() && !_playing.load()) {
             std::lock_guard<std::mutex> lk(_rec_mtx);
             write_wav_header(_rec_wav_buf, static_cast<uint32_t>(pcm_pos), REC_SAMPLE_RATE);
             _rec_wav_bytes = REC_HEADER_BYTES + pcm_pos;
@@ -601,7 +604,7 @@ void AppMcp::mic_task_loop()
             set_status_text("Sending voice to Antigravity...");
             GetHAL().showRgbColor(0, 72, 24);
         } else if (!_playing.load() && !_play_pending.load()) {
-            set_status_text("MCP Ready - Antigravity");
+            set_status_text(_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity");
             GetHAL().showRgbColor(0, 48, 42);
         }
     }
@@ -995,7 +998,7 @@ int AppMcp::handle_audio_get(httpd_req* req)
     self->_rec_ready          = false;
     self->_rec_wav_bytes      = 0;
     self->_face               = static_cast<int>(FaceExpr::Thinking);
-    self->_auto_hold_until_ms = GetHAL().millis() + 2500;
+    self->_auto_hold_until_ms = GetHAL().millis() + 10000;
     self->set_status_text("Antigravity thinking...");
     GetHAL().showRgbColor(64, 42, 0);
     return ESP_OK;
