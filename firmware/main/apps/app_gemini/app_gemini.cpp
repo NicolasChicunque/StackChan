@@ -35,6 +35,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 #include <vector>
 
 using namespace mooncake;
@@ -47,7 +48,9 @@ constexpr const char* TAG           = "GEMINI";
 constexpr const char* NVS_NS        = "gemini_live";
 constexpr const char* KEY_API_KEY   = "api_key";
 constexpr const char* KEY_MODEL     = "model";
+constexpr const char* KEY_VOICE     = "voice";
 constexpr const char* DEFAULT_MODEL = "gemini-3.8-live";
+constexpr const char* DEFAULT_VOICE = "Puck";
 constexpr const char* SD_KEY_PATH   = "/sd/gemini.txt";
 constexpr const char* SD_MOUNT_PT   = "/sd";
 
@@ -55,6 +58,10 @@ constexpr int W                     = 320;
 constexpr int H                     = 240;
 constexpr int VOLUME_STEP           = 10;
 constexpr uint32_t MAX_LISTEN_MS    = 30000;
+constexpr uint32_t SILENCE_END_MS   = 1800;         // Auto-send after ~1.8 s pause
+constexpr uint32_t ECHO_GUARD_MS    = 250;          // Wait 250 ms after speaker stops before re-arming mic
+constexpr size_t MIC_OUT_FRAMES     = 1600;         // 100 ms @ 16 kHz
+constexpr int PREROLL_CHUNKS        = 3;            // 300 ms pre-roll so first syllable is never clipped
 constexpr size_t PCM_RING_SAMPLES   = 24000 * 24;   // 24 s of 24 kHz 16-bit mono (~1.15 MB in PSRAM)
 constexpr size_t B64_DECODE_CAP     = 192 * 1024;   // 192 KB PSRAM scratch for decoded PCM chunks
 
@@ -220,15 +227,24 @@ void AppGemini::onOpen()
 
     _closing              = false;
     _want_connect         = false;
-    _want_start_talk      = false;
+    _want_arm_listen      = false;
     _want_stop_talk       = false;
+    _want_mute            = false;
+    _muted                = false;
     _setup_complete       = false;
+    _use_google_search    = true;
     _server_turn_done     = false;
     _new_turn_subtitle    = true;
     _audio_rms            = 0;
     _last_ui_ms           = 0;
     _last_led_ms          = 0;
     _listen_start_ms      = 0;
+    _preroll_write_idx    = 0;
+    _preroll_count        = 0;
+    _noise_floor          = 300.0f;
+    _speech_hits          = 0;
+    _speech_start_ms      = 0;
+    _last_voice_ms        = 0;
     _last_rendered_state  = -1;
     _last_rendered_sub.clear();
 
@@ -239,12 +255,17 @@ void AppGemini::onOpen()
     _img_naruto_happy     = assets::get_image("naruto_happy_music.bin");
     _avatar_showing_happy = false;
 
-    // Allocate PSRAM playback ring buffer & Base64 decode scratch buffer
+    // Allocate PSRAM playback ring buffer & Base64/VAD scratch buffers
     if (!_pcm_ring.allocate(PCM_RING_SAMPLES)) {
         ESP_LOGE(TAG, "Failed to allocate PSRAM PCM ring buffer");
     }
     _b64_decode_buf = static_cast<uint8_t*>(heap_caps_malloc(B64_DECODE_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     _b64_decode_cap = _b64_decode_buf ? B64_DECODE_CAP : 0;
+    _mic_pcm16k_buf =
+        static_cast<int16_t*>(heap_caps_malloc(MIC_OUT_FRAMES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    _mic_b64_buf = static_cast<unsigned char*>(heap_caps_malloc(4400, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    _preroll_buf = static_cast<int16_t*>(
+        heap_caps_malloc(PREROLL_CHUNKS * MIC_OUT_FRAMES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 
     // Load API key from /sd/gemini.txt (updating NVS) or cached NVS
     bool has_key = load_api_config();
@@ -275,9 +296,9 @@ void AppGemini::onRunning()
 {
     uint32_t now = GetHAL().millis();
 
-    // Auto-stop listening safety cap (30 s)
+    // Auto-stop hearing safety cap (30 s)
     SessionState st = static_cast<SessionState>(_state.load());
-    if (st == SessionState::Listening && _listen_start_ms > 0 && (now - _listen_start_ms) >= MAX_LISTEN_MS) {
+    if (st == SessionState::Hearing && _speech_start_ms > 0 && (now - _speech_start_ms) >= MAX_LISTEN_MS) {
         _want_stop_talk = true;
     }
 
@@ -329,32 +350,50 @@ void AppGemini::onClose()
         _b64_decode_buf = nullptr;
         _b64_decode_cap = 0;
     }
+    if (_mic_pcm16k_buf) {
+        heap_caps_free(_mic_pcm16k_buf);
+        _mic_pcm16k_buf = nullptr;
+    }
+    if (_mic_b64_buf) {
+        heap_caps_free(_mic_b64_buf);
+        _mic_b64_buf = nullptr;
+    }
+    if (_preroll_buf) {
+        heap_caps_free(_preroll_buf);
+        _preroll_buf = nullptr;
+    }
 }
 
 /* -------------------------------------------------------------------------- */
 /*                          Config Loading (SD + NVS)                         */
 /* -------------------------------------------------------------------------- */
 
-bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model)
+bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model, std::string& out_voice)
 {
-    sdmmc_host_t host   = SDSPI_HOST_DEFAULT();
-    host.slot           = SPI3_HOST;
-    host.max_freq_khz   = 12000;
+    bool already_mounted = false;
+    sdmmc_card_t* card   = nullptr;
+    struct stat st       = {};
+    if (stat(SD_MOUNT_PT, &st) == 0) {
+        already_mounted = true;
+    } else {
+        sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+        host.slot         = SPI3_HOST;
+        host.max_freq_khz = 12000;
 
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs               = GPIO_NUM_4;
-    slot_config.host_id               = static_cast<spi_host_device_t>(host.slot);
+        sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+        slot_config.gpio_cs               = GPIO_NUM_4;
+        slot_config.host_id               = static_cast<spi_host_device_t>(host.slot);
 
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {};
-    mount_config.format_if_mount_failed           = false;
-    mount_config.max_files                        = 3;
-    mount_config.allocation_unit_size             = 16 * 1024;
+        esp_vfs_fat_sdmmc_mount_config_t mount_config = {};
+        mount_config.format_if_mount_failed           = false;
+        mount_config.max_files                        = 3;
+        mount_config.allocation_unit_size             = 16 * 1024;
 
-    sdmmc_card_t* card = nullptr;
-    esp_err_t ret      = esp_vfs_fat_sdspi_mount(SD_MOUNT_PT, &host, &slot_config, &mount_config, &card);
-    if (ret != ESP_OK) {
-        ESP_LOGI(TAG, "microSD not mounted (%s); will check NVS", esp_err_to_name(ret));
-        return false;
+        esp_err_t ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_PT, &host, &slot_config, &mount_config, &card);
+        if (ret != ESP_OK) {
+            ESP_LOGI(TAG, "microSD not mounted (%s); will check NVS", esp_err_to_name(ret));
+            return false;
+        }
     }
 
     bool found = false;
@@ -366,7 +405,7 @@ bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model)
             std::string trimmed = trim_line(line);
             if (!trimmed.empty() && trimmed[0] != '#') {
                 lines.push_back(trimmed);
-                if (lines.size() >= 2) {
+                if (lines.size() >= 3) {
                     break;
                 }
             }
@@ -376,16 +415,20 @@ bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model)
         if (!lines.empty() && lines[0].size() >= 10) {
             out_key   = lines[0];
             out_model = (lines.size() >= 2 && !lines[1].empty()) ? lines[1] : DEFAULT_MODEL;
+            out_voice = (lines.size() >= 3 && !lines[2].empty()) ? lines[2] : DEFAULT_VOICE;
             found     = true;
-            ESP_LOGI(TAG, "Loaded Gemini API key from %s (model=%s)", SD_KEY_PATH, out_model.c_str());
+            ESP_LOGI(TAG, "Loaded Gemini API key from %s (model=%s, voice=%s)", SD_KEY_PATH, out_model.c_str(),
+                     out_voice.c_str());
         }
     }
 
-    esp_vfs_fat_sdcard_unmount(SD_MOUNT_PT, card);
+    if (!already_mounted && card) {
+        esp_vfs_fat_sdcard_unmount(SD_MOUNT_PT, card);
+    }
     return found;
 }
 
-bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model)
+bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model, std::string& out_voice)
 {
     nvs_handle_t h{};
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
@@ -419,16 +462,31 @@ bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model)
         }
     }
 
+    out_voice = DEFAULT_VOICE;
+    size_t vl = 0;
+    if (nvs_get_str(h, KEY_VOICE, nullptr, &vl) == ESP_OK && vl > 1 && vl < 64) {
+        std::string vbuf(vl, '\0');
+        if (nvs_get_str(h, KEY_VOICE, vbuf.data(), &vl) == ESP_OK) {
+            if (!vbuf.empty() && vbuf.back() == '\0') {
+                vbuf.pop_back();
+            }
+            if (!vbuf.empty()) {
+                out_voice = vbuf;
+            }
+        }
+    }
+
     nvs_close(h);
     return ok;
 }
 
-void AppGemini::save_key_to_nvs(const std::string& key, const std::string& model)
+void AppGemini::save_key_to_nvs(const std::string& key, const std::string& model, const std::string& voice)
 {
     nvs_handle_t h{};
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_str(h, KEY_API_KEY, key.c_str());
         nvs_set_str(h, KEY_MODEL, model.c_str());
+        nvs_set_str(h, KEY_VOICE, voice.c_str());
         nvs_commit(h);
         nvs_close(h);
     }
@@ -438,23 +496,28 @@ bool AppGemini::load_api_config()
 {
     std::string key;
     std::string model = DEFAULT_MODEL;
+    std::string voice = DEFAULT_VOICE;
 
-    if (read_key_from_sd(key, model)) {
+    if (read_key_from_sd(key, model, voice)) {
         _api_key    = key;
         _model_name = model;
-        save_key_to_nvs(_api_key, _model_name);
+        _voice_name = voice;
+        save_key_to_nvs(_api_key, _model_name, _voice_name);
         return true;
     }
 
-    if (load_key_from_nvs(key, model)) {
+    if (load_key_from_nvs(key, model, voice)) {
         _api_key    = key;
         _model_name = model;
-        ESP_LOGI(TAG, "Loaded cached Gemini API key from NVS (model=%s)", _model_name.c_str());
+        _voice_name = voice;
+        ESP_LOGI(TAG, "Loaded cached Gemini API key from NVS (model=%s, voice=%s)", _model_name.c_str(),
+                 _voice_name.c_str());
         return true;
     }
 
     _api_key.clear();
     _model_name = DEFAULT_MODEL;
+    _voice_name = DEFAULT_VOICE;
     return false;
 }
 
@@ -467,15 +530,14 @@ void AppGemini::start_tasks()
     _net_task_exited = false;
     _spk_task_exited = false;
 
-    BaseType_t ok_net = xTaskCreatePinnedToCoreWithCaps(
-        net_task_entry, "gemini_net", 16384, this, 4, nullptr, 0, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    // Must use internal SRAM stacks because startNetwork()/Wi-Fi/NVS/TLS access SPI Flash
+    BaseType_t ok_net = xTaskCreatePinnedToCore(net_task_entry, "gemini_net", 8192, this, 4, nullptr, 0);
     if (ok_net != pdPASS) {
         _net_task_exited = true;
         ESP_LOGE(TAG, "Failed to create gemini_net task");
     }
 
-    BaseType_t ok_spk = xTaskCreatePinnedToCoreWithCaps(
-        spk_task_entry, "gemini_spk", 12288, this, 5, nullptr, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    BaseType_t ok_spk = xTaskCreatePinnedToCore(spk_task_entry, "gemini_spk", 4096, this, 5, nullptr, 1);
     if (ok_spk != pdPASS) {
         _spk_task_exited = true;
         ESP_LOGE(TAG, "Failed to create gemini_spk task");
@@ -506,7 +568,7 @@ void AppGemini::spk_task_entry(void* arg)
     vTaskDelete(nullptr);
 }
 
-bool AppGemini::send_setup_message()
+bool AppGemini::send_setup_message(bool include_search)
 {
     if (!_ws || !_ws->IsConnected()) {
         return false;
@@ -525,16 +587,45 @@ bool AppGemini::send_setup_message()
     cJSON* modalities = cJSON_AddArrayToObject(gen_cfg, "responseModalities");
     cJSON_AddItemToArray(modalities, cJSON_CreateString("AUDIO"));
 
+    // Select energetic youthful male voice (default: Puck)
+    cJSON* speech_cfg = cJSON_AddObjectToObject(gen_cfg, "speechConfig");
+    cJSON* voice_cfg  = cJSON_AddObjectToObject(speech_cfg, "voiceConfig");
+    cJSON* prebuilt   = cJSON_AddObjectToObject(voice_cfg, "prebuiltVoiceConfig");
+    cJSON_AddStringToObject(prebuilt, "voiceName", _voice_name.empty() ? DEFAULT_VOICE : _voice_name.c_str());
+
+    // Optionally enable Grounding with Google Search (auto-falls back if Free Tier quota rejects it)
+    if (include_search) {
+        cJSON* tools       = cJSON_AddArrayToObject(setup, "tools");
+        cJSON* search_tool = cJSON_CreateObject();
+        cJSON_AddObjectToObject(search_tool, "googleSearch");
+        cJSON_AddItemToArray(tools, search_tool);
+    }
+
     cJSON* sys_inst = cJSON_AddObjectToObject(setup, "systemInstruction");
     cJSON* parts    = cJSON_AddArrayToObject(sys_inst, "parts");
     cJSON* part0    = cJSON_CreateObject();
-    cJSON_AddStringToObject(
-        part0, "text",
-        "You are StackChan, a friendly little desktop robot companion. "
-        "Keep answers concise, natural, and lively in the user's language.");
+    const bool naruto_mode =
+        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
+    const char* sys_prompt =
+        naruto_mode
+            ? (include_search
+                   ? "You are StackChan in Naruto mode: an energetic, upbeat, determined young ninja desktop "
+                     "companion. Speak with lively, youthful male energy, keeping answers concise and natural in "
+                     "the user's language. You have live Google Search enabled; use it for current news, weather, "
+                     "dates, and real-time facts."
+                   : "You are StackChan in Naruto mode: an energetic, upbeat, determined young ninja desktop "
+                     "companion. Speak with lively, youthful male energy, keeping answers concise and natural in "
+                     "the user's language.")
+            : (include_search
+                   ? "You are StackChan, a friendly little desktop robot companion. Keep answers concise, natural, "
+                     "and lively in the user's language. You have live Google Search enabled; use it for current "
+                     "news, weather, dates, and real-time facts."
+                   : "You are StackChan, a friendly little desktop robot companion. Keep answers concise, natural, "
+                     "and lively in the user's language.");
+    cJSON_AddStringToObject(part0, "text", sys_prompt);
     cJSON_AddItemToArray(parts, part0);
 
-    // Disable automatic VAD so the robot uses clean tap-to-talk (zero echo, minimal Free Tier quota)
+    // Disable automatic VAD so the robot uses clean client-side adaptive VAD (zero echo, minimal Free Tier quota)
     cJSON* rt_cfg = cJSON_AddObjectToObject(setup, "realtimeInputConfig");
     cJSON* aad    = cJSON_AddObjectToObject(rt_cfg, "automaticActivityDetection");
     cJSON_AddBoolToObject(aad, "disabled", true);
@@ -550,7 +641,8 @@ bool AppGemini::send_setup_message()
 
     std::string payload(printed);
     cJSON_free(printed);
-    ESP_LOGI(TAG, "Sending Gemini Live setup (%s)", model_path.c_str());
+    ESP_LOGI(TAG, "Sending Gemini Live setup (%s, search=%d, voice=%s)", model_path.c_str(),
+             include_search ? 1 : 0, _voice_name.c_str());
     return _ws->Send(payload);
 }
 
@@ -605,7 +697,8 @@ bool AppGemini::connect_live_session()
         ESP_LOGW(TAG, "Gemini WebSocket disconnected");
         if (!_closing.load()) {
             SessionState cur = static_cast<SessionState>(_state.load());
-            if (cur != SessionState::Error && cur != SessionState::NeedKey) {
+            if (cur != SessionState::Error && cur != SessionState::NeedKey &&
+                cur != SessionState::ConnectingApi) {
                 set_error("Session closed. Tap RETRY.");
             }
         }
@@ -616,37 +709,97 @@ bool AppGemini::connect_live_session()
         "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" +
         _api_key;
 
-    auto res = _ws->Connect(url.c_str());
-    if (!res) {
-        ESP_LOGE(TAG, "Connect failed: %s", res.error().ToString().c_str());
-        set_error("Connect failed (check Wi-Fi / API key)");
-        disconnect_live_session();
-        return false;
-    }
+    bool try_search = _use_google_search.load();
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (attempt == 1) {
+            // Setup closed immediately (often Free Tier quota=0 for googleSearch); retry cleanly without search
+            ESP_LOGW(TAG, "Retrying Gemini Live setup without googleSearch...");
+            set_subtitle("Retrying without web search...");
+            _use_google_search = false;
+            try_search         = false;
+            disconnect_live_session();
+            _ws = network->CreateWebSocket(0);
+            if (!_ws) {
+                set_error("Failed to create WebSocket");
+                return false;
+            }
+            _ws->SetReceiveBufferSize(16384);
+            _ws->OnData([this](const char* data, size_t len, bool /*binary*/) {
+                if (!_closing.load() && data && len > 0) {
+                    handle_server_json(data, len);
+                }
+            });
+            _ws->OnError([this](const NetworkError& err) {
+                ESP_LOGE(TAG, "WebSocket error: %s", err.ToString().c_str());
+                if (!_closing.load()) {
+                    set_error("Connection error: " + err.ToString());
+                }
+            });
+            _ws->OnDisconnected([this]() {
+                ESP_LOGW(TAG, "Gemini WebSocket disconnected");
+                if (!_closing.load()) {
+                    SessionState cur = static_cast<SessionState>(_state.load());
+                    if (cur != SessionState::Error && cur != SessionState::NeedKey &&
+                        cur != SessionState::ConnectingApi) {
+                        set_error("Session closed. Tap RETRY.");
+                    }
+                }
+            });
+        }
 
-    if (!send_setup_message()) {
-        set_error("Failed to send setup message");
-        disconnect_live_session();
-        return false;
-    }
+        _setup_complete   = false;
+        _server_turn_done = false;
+        set_state(SessionState::ConnectingApi);
 
-    // Wait up to 8 seconds for setupComplete
-    uint32_t t0 = GetHAL().millis();
-    while (!_closing.load() && !_setup_complete.load() && _ws && _ws->IsConnected()) {
-        if (GetHAL().millis() - t0 > 8000) {
-            set_error("Setup timeout (check API key / model)");
+        auto res = _ws->Connect(url.c_str());
+        if (!res) {
+            ESP_LOGE(TAG, "Connect failed: %s", res.error().ToString().c_str());
+            set_error("Connect failed (check Wi-Fi / API key)");
             disconnect_live_session();
             return false;
         }
-        vTaskDelay(pdMS_TO_TICKS(25));
+
+        if (!send_setup_message(try_search)) {
+            set_error("Failed to send setup message");
+            disconnect_live_session();
+            return false;
+        }
+
+        // Wait up to 8 seconds for setupComplete
+        uint32_t t0 = GetHAL().millis();
+        while (!_closing.load() && !_setup_complete.load() && _ws && _ws->IsConnected()) {
+            if (GetHAL().millis() - t0 > 8000) {
+                set_error("Setup timeout (check API key / model)");
+                disconnect_live_session();
+                return false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+
+        if (_closing.load()) {
+            return false;
+        }
+        if (_setup_complete.load()) {
+            break;
+        }
+        // If we already tried without search, report quota/rejection clearly
+        if (!try_search) {
+            set_error("API quota exceeded. Wait & tap RETRY.");
+            disconnect_live_session();
+            return false;
+        }
     }
 
-    if (_closing.load() || !_setup_complete.load()) {
+    if (!_setup_complete.load()) {
         return false;
     }
 
-    set_state(SessionState::Ready);
-    set_subtitle("Ready! Tap TALK to speak");
+    if (_muted.load()) {
+        set_state(SessionState::Ready);
+        set_subtitle("Paused. Tap RESUME to talk");
+    } else {
+        _want_arm_listen = true;
+    }
     return true;
 }
 
@@ -749,17 +902,43 @@ void AppGemini::handle_server_json(const char* data, size_t len)
     cJSON_Delete(root);
 }
 
-void AppGemini::stream_mic_chunk()
+bool AppGemini::send_pcm16k_chunk(const int16_t* pcm, size_t samples)
+{
+    if (!_ws || !_ws->IsConnected() || !_mic_b64_buf || !pcm || samples == 0) {
+        return false;
+    }
+
+    const size_t raw_bytes = samples * sizeof(int16_t);
+    size_t b64_len         = 0;
+    if (mbedtls_base64_encode(_mic_b64_buf, 4399, &b64_len, reinterpret_cast<const unsigned char*>(pcm), raw_bytes) !=
+        0) {
+        return false;
+    }
+    _mic_b64_buf[b64_len] = '\0';
+
+    std::string msg;
+    msg.reserve(b64_len + 96);
+    msg.append("{\"realtimeInput\":{\"audio\":{\"mimeType\":\"audio/pcm;rate=16000\",\"data\":\"");
+    msg.append(reinterpret_cast<const char*>(_mic_b64_buf), b64_len);
+    msg.append("\"}}}");
+
+    if (!_ws->Send(msg)) {
+        ESP_LOGW(TAG, "Failed to send audio chunk");
+        return false;
+    }
+    return true;
+}
+
+void AppGemini::process_mic_vad()
 {
     auto* codec = Board::GetInstance().GetAudioCodec();
-    if (!codec || !_ws || !_ws->IsConnected()) {
+    if (!codec || !_ws || !_ws->IsConnected() || !_mic_pcm16k_buf || !_mic_b64_buf) {
         return;
     }
 
     // Read 100 ms @ 24 kHz = 2400 frames; CoreS3 has 2 input channels (ch0=mic, ch1=ref)
-    constexpr size_t kInFrames  = 2400;
-    constexpr size_t kOutFrames = 1600;   // 100 ms @ 16 kHz (3:2 downsample)
-    const size_t in_ch          = std::max(codec->input_channels(), 1);
+    constexpr size_t kInFrames = 2400;
+    const size_t in_ch         = std::max(codec->input_channels(), 1);
 
     std::vector<int16_t> raw_in(kInFrames * in_ch);
     if (!codec->InputData(raw_in)) {
@@ -768,39 +947,75 @@ void AppGemini::stream_mic_chunk()
     }
 
     // Extract mic channel (ch0) & 3:2 downsample 24 kHz -> 16 kHz + compute RMS
-    int16_t pcm16k[kOutFrames];
     int64_t sum_sq = 0;
     for (size_t g = 0; g < kInFrames / 3; ++g) {
-        int32_t s0 = raw_in[(g * 3 + 0) * in_ch];
-        int32_t s1 = raw_in[(g * 3 + 1) * in_ch];
-        int32_t s2 = raw_in[(g * 3 + 2) * in_ch];
-        int16_t o0 = static_cast<int16_t>(s0);
-        int16_t o1 = static_cast<int16_t>((s1 + s2) / 2);
-        pcm16k[g * 2 + 0] = o0;
-        pcm16k[g * 2 + 1] = o1;
+        int32_t s0                 = raw_in[(g * 3 + 0) * in_ch];
+        int32_t s1                 = raw_in[(g * 3 + 1) * in_ch];
+        int32_t s2                 = raw_in[(g * 3 + 2) * in_ch];
+        int16_t o0                 = static_cast<int16_t>(s0);
+        int16_t o1                 = static_cast<int16_t>((s1 + s2) / 2);
+        _mic_pcm16k_buf[g * 2 + 0] = o0;
+        _mic_pcm16k_buf[g * 2 + 1] = o1;
         sum_sq += static_cast<int64_t>(o0) * o0 + static_cast<int64_t>(o1) * o1;
     }
-    int rms = static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / static_cast<double>(kOutFrames)));
+    int rms = static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / static_cast<double>(MIC_OUT_FRAMES)));
     _audio_rms.store(rms);
 
-    // Base64-encode 3200 bytes -> ~4268 chars
-    constexpr size_t kRawBytes = kOutFrames * sizeof(int16_t);
-    unsigned char b64_out[4400];
-    size_t b64_len = 0;
-    if (mbedtls_base64_encode(b64_out, sizeof(b64_out) - 1, &b64_len,
-                              reinterpret_cast<const unsigned char*>(pcm16k), kRawBytes) != 0) {
-        return;
-    }
-    b64_out[b64_len] = '\0';
+    uint32_t now          = GetHAL().millis();
+    SessionState cur      = static_cast<SessionState>(_state.load());
+    const int trigger_rms = std::max(550, static_cast<int>(_noise_floor * 2.3f));
+    const int hold_rms    = std::max(380, static_cast<int>(_noise_floor * 1.65f));
 
-    std::string msg;
-    msg.reserve(b64_len + 96);
-    msg.append("{\"realtimeInput\":{\"audio\":{\"mimeType\":\"audio/pcm;rate=16000\",\"data\":\"");
-    msg.append(reinterpret_cast<const char*>(b64_out), b64_len);
-    msg.append("\"}}}");
+    if (cur == SessionState::Listening) {
+        // Save chunk in circular 300 ms pre-roll buffer
+        if (_preroll_buf) {
+            std::memcpy(_preroll_buf + (_preroll_write_idx * MIC_OUT_FRAMES), _mic_pcm16k_buf,
+                        MIC_OUT_FRAMES * sizeof(int16_t));
+            _preroll_write_idx = (_preroll_write_idx + 1) % PREROLL_CHUNKS;
+            if (_preroll_count < PREROLL_CHUNKS) {
+                ++_preroll_count;
+            }
+        }
 
-    if (!_ws->Send(msg)) {
-        ESP_LOGW(TAG, "Failed to send audio chunk");
+        if (rms >= trigger_rms) {
+            ++_speech_hits;
+            if (_speech_hits >= 2) {
+                ESP_LOGI(TAG, "Voice detected (rms=%d, floor=%.0f, trig=%d)", rms, _noise_floor, trigger_rms);
+                _speech_start_ms = now;
+                _last_voice_ms   = now;
+                _ws->Send("{\"realtimeInput\":{\"activityStart\":{}}}");
+
+                // Flush pre-roll buffer in chronological order so first syllable is preserved
+                if (_preroll_buf && _preroll_count > 0) {
+                    int start_idx = (_preroll_write_idx - _preroll_count + PREROLL_CHUNKS) % PREROLL_CHUNKS;
+                    for (int k = 0; k < _preroll_count; ++k) {
+                        int slot = (start_idx + k) % PREROLL_CHUNKS;
+                        send_pcm16k_chunk(_preroll_buf + (slot * MIC_OUT_FRAMES), MIC_OUT_FRAMES);
+                    }
+                } else {
+                    send_pcm16k_chunk(_mic_pcm16k_buf, MIC_OUT_FRAMES);
+                }
+
+                _preroll_count = 0;
+                set_state(SessionState::Hearing);
+                set_subtitle("Hearing you...");
+            }
+        } else {
+            _speech_hits = 0;
+            // Gently track ambient room noise floor while silent
+            _noise_floor = std::clamp(_noise_floor * 0.92f + static_cast<float>(rms) * 0.08f, 120.0f, 1200.0f);
+        }
+    } else if (cur == SessionState::Hearing) {
+        send_pcm16k_chunk(_mic_pcm16k_buf, MIC_OUT_FRAMES);
+        if (rms >= hold_rms) {
+            _last_voice_ms = now;
+        }
+        // Auto-send after ~1.8 seconds of silence pause
+        if (now - _last_voice_ms >= SILENCE_END_MS) {
+            ESP_LOGI(TAG, "Pause detected (%lu ms), ending turn",
+                     static_cast<unsigned long>(now - _last_voice_ms));
+            _want_stop_talk = true;
+        }
     }
 }
 
@@ -814,33 +1029,55 @@ void AppGemini::net_task_loop()
             continue;
         }
 
-        if (_want_start_talk.exchange(false)) {
+        if (_want_mute.exchange(false)) {
+            _muted = true;
+            if (codec && codec->input_enabled()) {
+                codec->EnableInput(false);
+            }
+            if (static_cast<SessionState>(_state.load()) == SessionState::Hearing && _ws && _ws->IsConnected()) {
+                _ws->Send("{\"realtimeInput\":{\"activityEnd\":{}}}");
+            }
+            _audio_rms       = 0;
+            _speech_hits     = 0;
+            _preroll_count   = 0;
+            _speech_start_ms = 0;
+            set_state(SessionState::Ready);
+            set_subtitle("Paused. Tap RESUME to talk");
+            continue;
+        }
+
+        if (_want_arm_listen.exchange(false)) {
+            if (_muted.load()) {
+                set_state(SessionState::Ready);
+                set_subtitle("Paused. Tap RESUME to talk");
+                continue;
+            }
             if (!_ws || !_ws->IsConnected() || !_setup_complete.load()) {
                 if (!connect_live_session()) {
                     continue;
                 }
             }
 
-            // Barge-in: flush any queued speaker audio immediately
+            // Flush any remaining speaker audio (safe for barge-in or post-reply re-arm)
             _pcm_ring.clear();
             _server_turn_done  = false;
             _new_turn_subtitle = true;
             _audio_rms         = 0;
+            _speech_hits       = 0;
+            _preroll_count     = 0;
+            _preroll_write_idx = 0;
+            _speech_start_ms   = 0;
+            _last_voice_ms     = 0;
 
             if (codec && codec->output_enabled()) {
                 codec->EnableOutput(false);
+                vTaskDelay(pdMS_TO_TICKS(150));
             }
-
-            if (_ws && _ws->IsConnected()) {
-                _ws->Send("{\"realtimeInput\":{\"activityStart\":{}}}");
-            }
-
-            if (codec) {
+            if (codec && !codec->input_enabled()) {
                 codec->EnableInput(true);
             }
-            _listen_start_ms = GetHAL().millis();
             set_state(SessionState::Listening);
-            set_subtitle("Listening... tap SEND when done");
+            set_subtitle("Speak naturally...");
         }
 
         if (_want_stop_talk.exchange(false)) {
@@ -848,7 +1085,9 @@ void AppGemini::net_task_loop()
                 codec->EnableInput(false);
             }
             _audio_rms       = 0;
-            _listen_start_ms = 0;
+            _speech_hits     = 0;
+            _preroll_count   = 0;
+            _speech_start_ms = 0;
 
             if (_ws && _ws->IsConnected()) {
                 _ws->Send("{\"realtimeInput\":{\"activityEnd\":{}}}");
@@ -858,8 +1097,8 @@ void AppGemini::net_task_loop()
         }
 
         SessionState st = static_cast<SessionState>(_state.load());
-        if (st == SessionState::Listening) {
-            stream_mic_chunk();
+        if (st == SessionState::Listening || st == SessionState::Hearing) {
+            process_mic_vad();
         } else {
             vTaskDelay(pdMS_TO_TICKS(20));
         }
@@ -873,30 +1112,50 @@ void AppGemini::net_task_loop()
 
 void AppGemini::spk_task_loop()
 {
-    auto* codec = Board::GetInstance().GetAudioCodec();
-    constexpr size_t kChunkSamples = 480;   // 20 ms @ 24 kHz
-    std::vector<int16_t> chunk(kChunkSamples);
+    auto* codec                      = Board::GetInstance().GetAudioCodec();
+    constexpr size_t kOutSamples     = 480;   // 20 ms @ 24 kHz
+    constexpr size_t kNarutoIn       = 528;   // Exact 11:10 ratio (+10% pitch/energy in Naruto mode)
+    std::vector<int16_t> in_buf(kNarutoIn);
+    std::vector<int16_t> chunk(kOutSamples);
     bool output_active = false;
 
     while (!_closing.load()) {
-        size_t got = _pcm_ring.pop(chunk.data(), kChunkSamples);
-        if (got > 0 && codec) {
+        const bool naruto_pitch =
+            (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
+        const size_t need = naruto_pitch ? kNarutoIn : kOutSamples;
+        const size_t avail = _pcm_ring.available();
+
+        if (codec && (avail >= need || (avail > 0 && _server_turn_done.load()))) {
+            size_t got = _pcm_ring.pop(in_buf.data(), need);
             if (!output_active) {
                 codec->SetOutputVolume(_volume);
                 codec->EnableOutput(true);
                 output_active = true;
             }
-            if (got < kChunkSamples) {
-                std::fill(chunk.begin() + got, chunk.end(), 0);
+            if (got < need) {
+                std::fill(in_buf.begin() + got, in_buf.end(), 0);
+            }
+
+            if (naruto_pitch) {
+                for (size_t i = 0; i < kOutSamples; ++i) {
+                    float pos = static_cast<float>(i) * 1.10f;
+                    size_t idx = static_cast<size_t>(pos);
+                    float frac = pos - static_cast<float>(idx);
+                    float s0   = static_cast<float>(in_buf[idx]);
+                    float s1   = static_cast<float>(in_buf[idx + 1]);
+                    chunk[i]   = static_cast<int16_t>(s0 + (s1 - s0) * frac);
+                }
+            } else {
+                std::memcpy(chunk.data(), in_buf.data(), kOutSamples * sizeof(int16_t));
             }
 
             // Compute voice RMS for live mouth animation & LED pulse
             int64_t sum_sq = 0;
-            for (size_t i = 0; i < got; ++i) {
+            for (size_t i = 0; i < kOutSamples; ++i) {
                 int32_t s = chunk[i];
                 sum_sq += static_cast<int64_t>(s) * s;
             }
-            int rms = static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / static_cast<double>(got)));
+            int rms = static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / static_cast<double>(kOutSamples)));
             _audio_rms.store(rms);
 
             codec->OutputData(chunk);
@@ -912,8 +1171,21 @@ void AppGemini::spk_task_loop()
                     _audio_rms.store(0);
                     if (_server_turn_done.exchange(false) &&
                         static_cast<SessionState>(_state.load()) == SessionState::Speaking) {
-                        set_state(SessionState::Ready);
+                        // Brief echo guard before automatically re-arming hands-free mic
+                        vTaskDelay(pdMS_TO_TICKS(ECHO_GUARD_MS));
+                        if (!_closing.load() && !_muted.load()) {
+                            _want_arm_listen = true;
+                        } else if (!_closing.load()) {
+                            set_state(SessionState::Ready);
+                        }
                     }
+                }
+            } else if (!output_active && _server_turn_done.load() &&
+                       static_cast<SessionState>(_state.load()) == SessionState::Thinking) {
+                // Model completed a turn with no audio output; re-arm listening cleanly
+                _server_turn_done = false;
+                if (!_closing.load() && !_muted.load()) {
+                    _want_arm_listen = true;
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -937,18 +1209,27 @@ void AppGemini::on_primary_button()
             on_retry_button();
             break;
         case SessionState::Error:
+            _muted        = false;
             _want_connect = true;
             break;
         case SessionState::Ready:
-            _want_start_talk = true;
+            // Unmute & resume hands-free listening
+            _muted           = false;
+            _want_arm_listen = true;
             break;
         case SessionState::Listening:
+            // Mute hands-free listening to pause conversation
+            _want_mute = true;
+            break;
+        case SessionState::Hearing:
+            // Optional early send before 1.8 s silence timeout
             _want_stop_talk = true;
             break;
         case SessionState::Speaking:
         case SessionState::Thinking:
-            // Instant barge-in: stop playback & start listening again
-            _want_start_talk = true;
+            // Instant barge-in: stop playback & re-arm listening immediately
+            _muted           = false;
+            _want_arm_listen = true;
             break;
         case SessionState::ConnectingWifi:
         case SessionState::ConnectingApi:
@@ -1012,14 +1293,21 @@ void AppGemini::update_leds(SessionState st, int rms)
     switch (st) {
         case SessionState::Ready:
             r = 8;
-            g = 16;
-            b = 36;
+            g = 12;
+            b = 26;
             break;
         case SessionState::Listening: {
-            int level = std::clamp(24 + rms / 80, 24, 90);
+            float p = 0.5f + 0.5f * std::sin(static_cast<float>(now % 2400) / 2400.0f * 6.28318f);
+            r       = 0;
+            g       = static_cast<uint8_t>(12 + p * 18);
+            b       = static_cast<uint8_t>(16 + p * 16);
+            break;
+        }
+        case SessionState::Hearing: {
+            int level = std::clamp(32 + rms / 70, 32, 105);
             r         = 0;
             g         = static_cast<uint8_t>(level);
-            b         = static_cast<uint8_t>(level / 3);
+            b         = static_cast<uint8_t>(level / 4);
             break;
         }
         case SessionState::Thinking:
@@ -1316,15 +1604,21 @@ void AppGemini::refresh_ui(uint32_t now)
                 btn_col   = COL_CARD_HI;
                 break;
             case SessionState::Ready:
-                badge_txt = "GEMINI  READY";
-                badge_col = COL_GEMINI_BLUE;
-                btn_txt   = LV_SYMBOL_AUDIO " TALK";
+                badge_txt = "GEMINI  MUTED";
+                badge_col = COL_DIM;
+                btn_txt   = LV_SYMBOL_AUDIO " RESUME";
                 btn_col   = COL_GEMINI_BLUE;
                 break;
             case SessionState::Listening:
                 badge_txt = "GEMINI  LISTENING";
+                badge_col = COL_GEMINI_BLUE;
+                btn_txt   = LV_SYMBOL_MUTE " MUTE";
+                btn_col   = COL_CARD_HI;
+                break;
+            case SessionState::Hearing:
+                badge_txt = "GEMINI  HEARING";
                 badge_col = COL_GREEN;
-                btn_txt   = LV_SYMBOL_STOP " SEND";
+                btn_txt   = LV_SYMBOL_OK " SEND";
                 btn_col   = COL_GREEN;
                 break;
             case SessionState::Thinking:
@@ -1336,7 +1630,7 @@ void AppGemini::refresh_ui(uint32_t now)
             case SessionState::Speaking:
                 badge_txt = "GEMINI  SPEAKING";
                 badge_col = COL_GEMINI_PURP;
-                btn_txt   = LV_SYMBOL_AUDIO " REPLY";
+                btn_txt   = LV_SYMBOL_STOP " STOP";
                 btn_col   = COL_GEMINI_PURP;
                 break;
             case SessionState::Error:
@@ -1387,8 +1681,8 @@ void AppGemini::refresh_face_anim(uint32_t now, SessionState st)
         if (st == SessionState::Speaking) {
             int rms = _audio_rms.load();
             oy      = -std::clamp(rms / 400, 0, 5);
-        } else if (st == SessionState::Listening) {
-            oy = static_cast<int>(std::sin(static_cast<float>(now % 900) / 900.0f * 6.28318f) * 2.0f);
+        } else if (st == SessionState::Hearing) {
+            oy = static_cast<int>(std::sin(static_cast<float>(now % 700) / 700.0f * 6.28318f) * 2.0f);
         } else {
             oy = static_cast<int>(std::sin(static_cast<float>(now % 3000) / 3000.0f * 6.28318f) * 2.0f);
         }
@@ -1406,11 +1700,14 @@ void AppGemini::refresh_face_anim(uint32_t now, SessionState st)
     int mouth_h    = 6;
     uint32_t bcol  = COL_CARD_HI;
 
-    if (st == SessionState::Listening) {
+    if (st == SessionState::Hearing) {
         bcol    = COL_GREEN;
         int lvl = std::clamp(rms / 250, 0, 10);
         mouth_w = 24 + lvl;
         mouth_h = 8 + lvl;
+    } else if (st == SessionState::Listening) {
+        bcol     = COL_GEMINI_BLUE;
+        offset_y = static_cast<int>(std::sin(static_cast<float>(now % 2400) / 2400.0f * 6.28318f) * 2.0f);
     } else if (st == SessionState::Speaking) {
         bcol    = COL_GEMINI_PURP;
         int lvl = std::clamp(rms / 220, 0, 18);

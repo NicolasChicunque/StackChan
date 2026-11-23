@@ -37,10 +37,11 @@ private:
         NeedKey = 0,
         ConnectingWifi,
         ConnectingApi,
-        Ready,
-        Listening,
-        Thinking,
-        Speaking,
+        Ready,      // Paused / muted by user
+        Listening,  // Hands-free armed: waiting for voice locally (0 quota)
+        Hearing,    // Voice detected: streaming audio to Gemini
+        Thinking,   // Pause detected: waiting for Gemini reply
+        Speaking,   // Playing Gemini voice reply
         Error,
     };
 
@@ -63,9 +64,9 @@ private:
 
     /* ----------------------- Config (SD + NVS) ---------------------------- */
     bool load_api_config();
-    bool read_key_from_sd(std::string& out_key, std::string& out_model);
-    bool load_key_from_nvs(std::string& out_key, std::string& out_model);
-    void save_key_to_nvs(const std::string& key, const std::string& model);
+    bool read_key_from_sd(std::string& out_key, std::string& out_model, std::string& out_voice);
+    bool load_key_from_nvs(std::string& out_key, std::string& out_model, std::string& out_voice);
+    void save_key_to_nvs(const std::string& key, const std::string& model, const std::string& voice);
 
     /* --------------------- Background Tasks & Live API -------------------- */
     void start_tasks();
@@ -77,9 +78,10 @@ private:
 
     bool connect_live_session();
     void disconnect_live_session();
-    bool send_setup_message();
+    bool send_setup_message(bool include_search);
+    bool send_pcm16k_chunk(const int16_t* pcm, size_t samples);
     void handle_server_json(const char* data, size_t len);
-    void stream_mic_chunk();
+    void process_mic_vad();
 
     /* ------------------------- User Actions ------------------------------- */
     void on_primary_button();
@@ -99,6 +101,7 @@ private:
     /* ------------------------------- State -------------------------------- */
     std::string _api_key;
     std::string _model_name = "gemini-3.8-live";
+    std::string _voice_name = "Puck";
     int _volume             = 75;
 
     std::atomic<int> _state{static_cast<int>(SessionState::NeedKey)};
@@ -106,9 +109,12 @@ private:
     std::atomic<bool> _net_task_exited{true};
     std::atomic<bool> _spk_task_exited{true};
     std::atomic<bool> _want_connect{false};
-    std::atomic<bool> _want_start_talk{false};
+    std::atomic<bool> _want_arm_listen{false};
     std::atomic<bool> _want_stop_talk{false};
+    std::atomic<bool> _want_mute{false};
+    std::atomic<bool> _muted{false};
     std::atomic<bool> _setup_complete{false};
+    std::atomic<bool> _use_google_search{true};
     std::atomic<bool> _server_turn_done{false};
     std::atomic<bool> _new_turn_subtitle{true};
     std::atomic<int> _audio_rms{0};
@@ -117,6 +123,17 @@ private:
     PcmRingBuffer _pcm_ring;
     uint8_t* _b64_decode_buf    = nullptr;
     size_t _b64_decode_cap      = 0;
+    int16_t* _mic_pcm16k_buf    = nullptr;
+    unsigned char* _mic_b64_buf = nullptr;
+    int16_t* _preroll_buf       = nullptr;
+    int _preroll_write_idx      = 0;
+    int _preroll_count          = 0;
+
+    // Adaptive client-side VAD state (net_task only)
+    float _noise_floor          = 300.0f;
+    int _speech_hits            = 0;
+    uint32_t _speech_start_ms   = 0;
+    uint32_t _last_voice_ms     = 0;
 
     mutable std::mutex _text_mtx;
     std::string _subtitle;
