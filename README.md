@@ -36,6 +36,15 @@ The **robot body**, connected to the main unit, includes a USB-C interface for p
 
 The **factory firmware** is feature-rich, including an AI Agent, lively and expressive animations, ESP-NOW wireless remote control, and online app downloads. It can connect to a mobile app for video viewing, remote avatar control, and more, and also supports online updates (OTA). The product also supports programming via Arduino, UiFlow2, and other methods, and can connect to various expansion units in the M5Stack ecosystem, making it easy to implement a wide range of custom functions. 
 
+### Gemini Live Voice Assistant (`GEMINI`)
+
+The firmware also includes a built-in **Gemini Live (`GEMINI`)** app that connects directly over Wi-Fi (`WSS`) to the Google Gemini Live API (`gemini-3.8-live`) with no external server required:
+
+- **Direct speech-to-speech**: Streams 16 kHz PCM microphone audio and plays back 24 kHz PCM voice replies with live captions (`outputAudioTranscription`), animated face, and RGB status LEDs.
+- **Tap-to-talk (Free Tier friendly)**: Uses manual activity signals (`activityStart` / `activityEnd`) so audio tokens are only sent while talking, avoiding acoustic echo and conserving Google AI Studio free-tier quota.
+- **Simple API key setup**: Save a free Google AI Studio API key in `/sd/gemini.txt` on a FAT32 microSD card (automatically cached in NVS on first open; optional second line overrides the model ID).
+- **Menu visibility toggle**: Can be shown or hidden from `SETUP -> Apps -> App visibility`.
+
 > ⚠️ Do not forcibly rotate any movable parts connected to the motors by hand when you are unsure whether the motors are powered and under control, as this may cause hardware damage. 
 
 - Purchase link: [M5Stack Official Store](https://shop.m5stack.com/products/stackchan-kawaii-co-created-open-source-ai-desktop-robot) | [淘宝 Taobao](https://item.taobao.com/item.htm?id=1042238294510)

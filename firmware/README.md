@@ -42,4 +42,5 @@ idf.py flash
 - `EZDATA` – EzData cloud integration
 - `DANCE` – BLE dance controller
 - `MUSIC` – Offline microSD Music Player (`.wav` & `.mp3` from `/sd`, rhythm RGB LEDs & servo sway, NVS-persisted settings and last track)
+- `GEMINI` – Direct Gemini Live API voice assistant (`WSS` over Wi-Fi, tap-to-talk, free-tier API key via `/sd/gemini.txt` + NVS)
 - `SETUP` – Device settings, hardware tests, and app visibility toggles

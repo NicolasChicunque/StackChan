@@ -207,6 +207,6 @@ void AppSetup::onClose()
     view::destroy_status_bar();
 
     if (_need_warm_reset) {
-        GetHAL().requestWarmReboot(7);
+        GetHAL().requestWarmReboot(8);
     }
 }

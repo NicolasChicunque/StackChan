@@ -43,6 +43,7 @@ extern "C" void app_main(void)
         hal_toggles::register_app_id(hal_toggles::App::Dance, GetMooncake().installApp(std::make_unique<AppDance>()));
         hal_toggles::register_app_id(hal_toggles::App::Music,
                                      GetMooncake().installApp(std::make_unique<AppMusicPlayer>()));
+        hal_toggles::register_app_id(hal_toggles::App::Gemini, GetMooncake().installApp(std::make_unique<AppGemini>()));
         GetMooncake().installApp(std::make_unique<AppSetup>());
 
         // Main loop
