@@ -14,3 +14,4 @@
 #include "app_dance/app_dance.h"
 #include "app_music_player/app_music_player.h"
 #include "app_gemini/app_gemini.h"
+#include "app_mcp/app_mcp.h"
