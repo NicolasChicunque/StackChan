@@ -65,8 +65,9 @@ private:
     /* ----------------------- Config (SD + NVS) ---------------------------- */
     bool load_api_config();
     bool read_key_from_sd(std::string& out_key, std::string& out_model, std::string& out_voice);
-    bool load_key_from_nvs(std::string& out_key, std::string& out_model, std::string& out_voice);
-    void save_key_to_nvs(const std::string& key, const std::string& model, const std::string& voice);
+    bool load_key_from_nvs(std::string& out_key, std::string& out_model, std::string& out_voice, int& out_pitch_pct);
+    void save_key_to_nvs(const std::string& key, const std::string& model, const std::string& voice, int pitch_pct);
+    void save_voice_pitch_to_nvs();
 
     /* --------------------- Background Tasks & Live API -------------------- */
     void start_tasks();
@@ -87,6 +88,10 @@ private:
     void on_primary_button();
     void on_retry_button();
     void change_volume(int delta);
+    void open_settings();
+    void close_settings();
+    void cycle_voice(int delta);
+    void change_pitch(int delta_pct);
     void set_state(SessionState st);
     void set_subtitle(const std::string& text, bool append = false);
     void set_error(const std::string& msg);
@@ -96,12 +101,17 @@ private:
     void build_ui();
     void destroy_ui();
     void refresh_ui(uint32_t now);
+    void refresh_settings_ui();
     void refresh_face_anim(uint32_t now, SessionState st);
 
     /* ------------------------------- State -------------------------------- */
     std::string _api_key;
     std::string _model_name = "gemini-3.8-live";
     std::string _voice_name = "Puck";
+    int _voice_index        = 0;
+    std::atomic<int> _pitch_pct{110};
+    bool _settings_open     = false;
+    bool _voice_dirty       = false;
     int _volume             = 75;
 
     std::atomic<int> _state{static_cast<int>(SessionState::NeedKey)};
@@ -170,5 +180,11 @@ private:
     lv_obj_t* _btn_primary      = nullptr;
     lv_obj_t* _lbl_primary      = nullptr;
     lv_obj_t* _btn_vol_up       = nullptr;
+    lv_obj_t* _btn_settings     = nullptr;
     lv_obj_t* _btn_exit         = nullptr;
+
+    // Settings overlay (Voice & Pitch)
+    lv_obj_t* _settings_cont    = nullptr;
+    lv_obj_t* _lbl_voice_val    = nullptr;
+    lv_obj_t* _lbl_pitch_val    = nullptr;
 };

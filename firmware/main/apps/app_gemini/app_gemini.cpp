@@ -49,10 +49,42 @@ constexpr const char* NVS_NS        = "gemini_live";
 constexpr const char* KEY_API_KEY   = "api_key";
 constexpr const char* KEY_MODEL     = "model";
 constexpr const char* KEY_VOICE     = "voice";
+constexpr const char* KEY_PITCH     = "pitch_pct";
 constexpr const char* DEFAULT_MODEL = "gemini-3.8-live";
 constexpr const char* DEFAULT_VOICE = "Puck";
+constexpr int DEFAULT_PITCH_PCT     = 110;
+constexpr int MIN_PITCH_PCT         = 85;
+constexpr int MAX_PITCH_PCT         = 130;
+constexpr int PITCH_STEP_PCT        = 5;
 constexpr const char* SD_KEY_PATH   = "/sd/gemini.txt";
 constexpr const char* SD_MOUNT_PT   = "/sd";
+
+struct VoicePreset {
+    const char* name;
+    const char* desc;
+};
+
+constexpr VoicePreset kVoicePresets[] = {
+    {"Puck",   "Youthful M"},
+    {"Fenrir", "Excitable M"},
+    {"Orus",   "Firm M"},
+    {"Charon", "Deep M"},
+    {"Zephyr", "Bright F"},
+    {"Kore",   "Firm F"},
+    {"Aoede",  "Breezy F"},
+    {"Leda",   "Youthful F"},
+};
+constexpr int kVoicePresetCount = static_cast<int>(sizeof(kVoicePresets) / sizeof(kVoicePresets[0]));
+
+int find_voice_index(const std::string& name)
+{
+    for (int i = 0; i < kVoicePresetCount; ++i) {
+        if (name == kVoicePresets[i].name) {
+            return i;
+        }
+    }
+    return 0;
+}
 
 constexpr int W                     = 320;
 constexpr int H                     = 240;
@@ -247,6 +279,8 @@ void AppGemini::onOpen()
     _last_voice_ms        = 0;
     _last_rendered_state  = -1;
     _last_rendered_sub.clear();
+    _settings_open        = false;
+    _voice_dirty          = false;
 
     _volume = std::clamp(static_cast<int>(GetHAL().getSpeakerVolume()), 10, 100);
 
@@ -414,11 +448,10 @@ bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model, s
 
         if (!lines.empty() && lines[0].size() >= 10) {
             out_key   = lines[0];
-            out_model = (lines.size() >= 2 && !lines[1].empty()) ? lines[1] : DEFAULT_MODEL;
-            out_voice = (lines.size() >= 3 && !lines[2].empty()) ? lines[2] : DEFAULT_VOICE;
+            out_model = (lines.size() >= 2 && !lines[1].empty()) ? lines[1] : "";
+            out_voice = (lines.size() >= 3 && !lines[2].empty()) ? lines[2] : "";
             found     = true;
-            ESP_LOGI(TAG, "Loaded Gemini API key from %s (model=%s, voice=%s)", SD_KEY_PATH, out_model.c_str(),
-                     out_voice.c_str());
+            ESP_LOGI(TAG, "Loaded Gemini API key from %s", SD_KEY_PATH);
         }
     }
 
@@ -428,8 +461,13 @@ bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model, s
     return found;
 }
 
-bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model, std::string& out_voice)
+bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model, std::string& out_voice,
+                                  int& out_pitch_pct)
 {
+    out_model     = DEFAULT_MODEL;
+    out_voice     = DEFAULT_VOICE;
+    out_pitch_pct = DEFAULT_PITCH_PCT;
+
     nvs_handle_t h{};
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
         return false;
@@ -448,7 +486,6 @@ bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model, 
         }
     }
 
-    out_model = DEFAULT_MODEL;
     size_t ml = 0;
     if (nvs_get_str(h, KEY_MODEL, nullptr, &ml) == ESP_OK && ml > 2 && ml < 128) {
         std::string mbuf(ml, '\0');
@@ -462,7 +499,6 @@ bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model, 
         }
     }
 
-    out_voice = DEFAULT_VOICE;
     size_t vl = 0;
     if (nvs_get_str(h, KEY_VOICE, nullptr, &vl) == ESP_OK && vl > 1 && vl < 64) {
         std::string vbuf(vl, '\0');
@@ -476,17 +512,35 @@ bool AppGemini::load_key_from_nvs(std::string& out_key, std::string& out_model, 
         }
     }
 
+    int32_t stored_pitch = DEFAULT_PITCH_PCT;
+    if (nvs_get_i32(h, KEY_PITCH, &stored_pitch) == ESP_OK) {
+        out_pitch_pct = std::clamp(static_cast<int>(stored_pitch), MIN_PITCH_PCT, MAX_PITCH_PCT);
+    }
+
     nvs_close(h);
     return ok;
 }
 
-void AppGemini::save_key_to_nvs(const std::string& key, const std::string& model, const std::string& voice)
+void AppGemini::save_key_to_nvs(const std::string& key, const std::string& model, const std::string& voice,
+                                int pitch_pct)
 {
     nvs_handle_t h{};
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_str(h, KEY_API_KEY, key.c_str());
         nvs_set_str(h, KEY_MODEL, model.c_str());
         nvs_set_str(h, KEY_VOICE, voice.c_str());
+        nvs_set_i32(h, KEY_PITCH, static_cast<int32_t>(pitch_pct));
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+void AppGemini::save_voice_pitch_to_nvs()
+{
+    nvs_handle_t h{};
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, KEY_VOICE, _voice_name.c_str());
+        nvs_set_i32(h, KEY_PITCH, static_cast<int32_t>(_pitch_pct.load()));
         nvs_commit(h);
         nvs_close(h);
     }
@@ -494,30 +548,44 @@ void AppGemini::save_key_to_nvs(const std::string& key, const std::string& model
 
 bool AppGemini::load_api_config()
 {
-    std::string key;
-    std::string model = DEFAULT_MODEL;
-    std::string voice = DEFAULT_VOICE;
+    std::string nvs_key;
+    std::string nvs_model = DEFAULT_MODEL;
+    std::string nvs_voice = DEFAULT_VOICE;
+    int nvs_pitch         = DEFAULT_PITCH_PCT;
+    bool has_nvs          = load_key_from_nvs(nvs_key, nvs_model, nvs_voice, nvs_pitch);
 
-    if (read_key_from_sd(key, model, voice)) {
-        _api_key    = key;
-        _model_name = model;
-        _voice_name = voice;
-        save_key_to_nvs(_api_key, _model_name, _voice_name);
+    std::string sd_key;
+    std::string sd_model;
+    std::string sd_voice;
+    if (read_key_from_sd(sd_key, sd_model, sd_voice)) {
+        _api_key     = sd_key;
+        _model_name  = !sd_model.empty() ? sd_model : (has_nvs ? nvs_model : DEFAULT_MODEL);
+        // Preserve in-app NVS voice unless line 3 of /sd/gemini.txt explicitly overrides it
+        _voice_name  = !sd_voice.empty() ? sd_voice : (has_nvs ? nvs_voice : DEFAULT_VOICE);
+        _voice_index = find_voice_index(_voice_name);
+        _pitch_pct.store(nvs_pitch);
+        save_key_to_nvs(_api_key, _model_name, _voice_name, nvs_pitch);
+        ESP_LOGI(TAG, "Config ready (model=%s, voice=%s, pitch=%d%%)", _model_name.c_str(), _voice_name.c_str(),
+                 nvs_pitch);
         return true;
     }
 
-    if (load_key_from_nvs(key, model, voice)) {
-        _api_key    = key;
-        _model_name = model;
-        _voice_name = voice;
-        ESP_LOGI(TAG, "Loaded cached Gemini API key from NVS (model=%s, voice=%s)", _model_name.c_str(),
-                 _voice_name.c_str());
+    if (has_nvs) {
+        _api_key     = nvs_key;
+        _model_name  = nvs_model;
+        _voice_name  = nvs_voice;
+        _voice_index = find_voice_index(_voice_name);
+        _pitch_pct.store(nvs_pitch);
+        ESP_LOGI(TAG, "Loaded cached Gemini config from NVS (model=%s, voice=%s, pitch=%d%%)", _model_name.c_str(),
+                 _voice_name.c_str(), nvs_pitch);
         return true;
     }
 
     _api_key.clear();
-    _model_name = DEFAULT_MODEL;
-    _voice_name = DEFAULT_VOICE;
+    _model_name  = DEFAULT_MODEL;
+    _voice_name  = DEFAULT_VOICE;
+    _voice_index = 0;
+    _pitch_pct.store(DEFAULT_PITCH_PCT);
     return false;
 }
 
@@ -1112,41 +1180,69 @@ void AppGemini::net_task_loop()
 
 void AppGemini::spk_task_loop()
 {
-    auto* codec                      = Board::GetInstance().GetAudioCodec();
-    constexpr size_t kOutSamples     = 480;   // 20 ms @ 24 kHz
-    constexpr size_t kNarutoIn       = 528;   // Exact 11:10 ratio (+10% pitch/energy in Naruto mode)
-    std::vector<int16_t> in_buf(kNarutoIn);
+    auto* codec                  = Board::GetInstance().GetAudioCodec();
+    constexpr size_t kOutSamples = 480;   // 20 ms @ 24 kHz
+    std::vector<int16_t> resample_buf;
+    resample_buf.reserve(1024);
+    std::vector<int16_t> pull_buf(512);
     std::vector<int16_t> chunk(kOutSamples);
+    double frac_pos    = 0.0;
     bool output_active = false;
 
     while (!_closing.load()) {
-        const bool naruto_pitch =
-            (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
-        const size_t need = naruto_pitch ? kNarutoIn : kOutSamples;
-        const size_t avail = _pcm_ring.available();
+        const int pitch_pct = std::clamp(_pitch_pct.load(), MIN_PITCH_PCT, MAX_PITCH_PCT);
+        const double ratio  = static_cast<double>(pitch_pct) / 100.0;
+        const size_t need   = (pitch_pct == 100) ? kOutSamples
+                                                 : static_cast<size_t>(std::ceil(kOutSamples * ratio)) + 2;
 
-        if (codec && (avail >= need || (avail > 0 && _server_turn_done.load()))) {
-            size_t got = _pcm_ring.pop(in_buf.data(), need);
+        // Top up local resample buffer from PSRAM ring buffer
+        if (resample_buf.size() < need) {
+            size_t want = std::min(pull_buf.size(), need - resample_buf.size());
+            size_t got  = _pcm_ring.pop(pull_buf.data(), want);
+            if (got > 0) {
+                resample_buf.insert(resample_buf.end(), pull_buf.begin(), pull_buf.begin() + got);
+            }
+        }
+
+        const bool has_enough = (resample_buf.size() >= need);
+        const bool draining   = (!resample_buf.empty() && _pcm_ring.available() == 0 && _server_turn_done.load());
+
+        if (codec && (has_enough || draining)) {
             if (!output_active) {
                 codec->SetOutputVolume(_volume);
                 codec->EnableOutput(true);
                 output_active = true;
             }
-            if (got < need) {
-                std::fill(in_buf.begin() + got, in_buf.end(), 0);
-            }
 
-            if (naruto_pitch) {
-                for (size_t i = 0; i < kOutSamples; ++i) {
-                    float pos = static_cast<float>(i) * 1.10f;
-                    size_t idx = static_cast<size_t>(pos);
-                    float frac = pos - static_cast<float>(idx);
-                    float s0   = static_cast<float>(in_buf[idx]);
-                    float s1   = static_cast<float>(in_buf[idx + 1]);
-                    chunk[i]   = static_cast<int16_t>(s0 + (s1 - s0) * frac);
+            if (pitch_pct == 100) {
+                size_t copy_n = std::min(kOutSamples, resample_buf.size());
+                std::memcpy(chunk.data(), resample_buf.data(), copy_n * sizeof(int16_t));
+                if (copy_n < kOutSamples) {
+                    std::fill(chunk.begin() + copy_n, chunk.end(), 0);
                 }
+                resample_buf.erase(resample_buf.begin(), resample_buf.begin() + copy_n);
+                frac_pos = 0.0;
             } else {
-                std::memcpy(chunk.data(), in_buf.data(), kOutSamples * sizeof(int16_t));
+                // Ensure enough zero-padded tail when draining at end of turn
+                if (resample_buf.size() < need) {
+                    resample_buf.resize(need, 0);
+                }
+                for (size_t i = 0; i < kOutSamples; ++i) {
+                    size_t idx = static_cast<size_t>(frac_pos);
+                    double f   = frac_pos - static_cast<double>(idx);
+                    double s0  = static_cast<double>(resample_buf[idx]);
+                    double s1  = static_cast<double>(resample_buf[idx + 1]);
+                    chunk[i]   = static_cast<int16_t>(s0 + (s1 - s0) * f);
+                    frac_pos += ratio;
+                }
+                size_t consumed = static_cast<size_t>(frac_pos);
+                frac_pos -= static_cast<double>(consumed);
+                if (consumed >= resample_buf.size()) {
+                    resample_buf.clear();
+                    frac_pos = 0.0;
+                } else {
+                    resample_buf.erase(resample_buf.begin(), resample_buf.begin() + consumed);
+                }
             }
 
             // Compute voice RMS for live mouth animation & LED pulse
@@ -1160,7 +1256,7 @@ void AppGemini::spk_task_loop()
 
             codec->OutputData(chunk);
         } else {
-            if (output_active && _pcm_ring.available() == 0) {
+            if (output_active && _pcm_ring.available() == 0 && resample_buf.empty()) {
                 // Keep output open briefly between network packets unless turn is complete or interrupted
                 if (_server_turn_done.load() ||
                     static_cast<SessionState>(_state.load()) != SessionState::Speaking) {
@@ -1168,6 +1264,7 @@ void AppGemini::spk_task_loop()
                         codec->EnableOutput(false);
                     }
                     output_active = false;
+                    frac_pos      = 0.0;
                     _audio_rms.store(0);
                     if (_server_turn_done.exchange(false) &&
                         static_cast<SessionState>(_state.load()) == SessionState::Speaking) {
@@ -1180,6 +1277,10 @@ void AppGemini::spk_task_loop()
                         }
                     }
                 }
+            } else if (static_cast<SessionState>(_state.load()) != SessionState::Speaking && !resample_buf.empty()) {
+                // Flush stale resample tail on barge-in
+                resample_buf.clear();
+                frac_pos = 0.0;
             } else if (!output_active && _server_turn_done.load() &&
                        static_cast<SessionState>(_state.load()) == SessionState::Thinking) {
                 // Model completed a turn with no audio output; re-arm listening cleanly
@@ -1254,6 +1355,72 @@ void AppGemini::change_volume(int delta)
 {
     _volume = std::clamp(_volume + delta, 10, 100);
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume), true);
+}
+
+void AppGemini::open_settings()
+{
+    if (!_settings_cont) {
+        return;
+    }
+    _settings_open = true;
+    _voice_dirty   = false;
+    refresh_settings_ui();
+    lv_obj_remove_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
+}
+
+void AppGemini::close_settings()
+{
+    if (!_settings_cont) {
+        return;
+    }
+    _settings_open = false;
+    lv_obj_add_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
+    save_voice_pitch_to_nvs();
+
+    if (_voice_dirty && !_api_key.empty()) {
+        _voice_dirty = false;
+        _pcm_ring.clear();
+        set_subtitle("Applying voice: " + _voice_name + "...");
+        _want_connect = true;
+    }
+}
+
+void AppGemini::cycle_voice(int delta)
+{
+    _voice_index = (_voice_index + delta + kVoicePresetCount) % kVoicePresetCount;
+    _voice_name  = kVoicePresets[_voice_index].name;
+    _voice_dirty = true;
+    save_voice_pitch_to_nvs();
+    refresh_settings_ui();
+}
+
+void AppGemini::change_pitch(int delta_pct)
+{
+    int next = std::clamp(_pitch_pct.load() + delta_pct, MIN_PITCH_PCT, MAX_PITCH_PCT);
+    _pitch_pct.store(next);
+    save_voice_pitch_to_nvs();
+    refresh_settings_ui();
+}
+
+void AppGemini::refresh_settings_ui()
+{
+    if (_lbl_voice_val) {
+        char vbuf[48];
+        std::snprintf(vbuf, sizeof(vbuf), "%s\n(%s)", kVoicePresets[_voice_index].name,
+                      kVoicePresets[_voice_index].desc);
+        lv_label_set_text(_lbl_voice_val, vbuf);
+    }
+    if (_lbl_pitch_val) {
+        int pct  = _pitch_pct.load();
+        int diff = pct - 100;
+        char pbuf[48];
+        if (diff == 0) {
+            std::snprintf(pbuf, sizeof(pbuf), "1.00x\n(Normal)");
+        } else {
+            std::snprintf(pbuf, sizeof(pbuf), "%.2fx\n(%+d%%)", static_cast<double>(pct) / 100.0, diff);
+        }
+        lv_label_set_text(_lbl_pitch_val, pbuf);
+    }
 }
 
 void AppGemini::set_state(SessionState st)
@@ -1453,11 +1620,12 @@ void AppGemini::build_ui()
     lv_obj_set_style_text_color(_lbl_subtitle, lv_color_hex(COL_TEXT), 0);
     lv_label_set_text(_lbl_subtitle, "Starting...");
 
-    // Bottom 4-button control bar (y = 190 .. 234): VOL- | TALK/SEND | VOL+ | EXIT
-    auto make_btn = [&](int x, int w, uint32_t bg, const char* txt, const lv_font_t* font) -> lv_obj_t* {
-        lv_obj_t* b = lv_button_create(_root_cont);
-        lv_obj_set_pos(b, x, 190);
-        lv_obj_set_size(b, w, 44);
+    // Bottom 5-button control bar (y = 190 .. 234): VOL- | MUTE/STOP | VOL+ | Settings | EXIT
+    auto make_btn = [&](lv_obj_t* parent, int x, int y, int w, int h, uint32_t bg, const char* txt,
+                        const lv_font_t* font) -> lv_obj_t* {
+        lv_obj_t* b = lv_button_create(parent);
+        lv_obj_set_pos(b, x, y);
+        lv_obj_set_size(b, w, h);
         style_flat_box(b, bg, 10);
         lv_obj_set_style_border_width(b, 1, 0);
         lv_obj_set_style_border_color(b, lv_color_hex(COL_CARD_HI), 0);
@@ -1469,7 +1637,7 @@ void AppGemini::build_ui()
         return b;
     };
 
-    _btn_vol_dn = make_btn(8, 52, COL_CARD, "VOL-", &lv_font_montserrat_12);
+    _btn_vol_dn = make_btn(_root_cont, 4, 190, 46, 44, COL_CARD, "VOL-", &lv_font_montserrat_12);
     lv_obj_add_event_cb(
         _btn_vol_dn,
         [](lv_event_t* e) {
@@ -1478,12 +1646,12 @@ void AppGemini::build_ui()
         LV_EVENT_CLICKED, this);
 
     _btn_primary = lv_button_create(_root_cont);
-    lv_obj_set_pos(_btn_primary, 66, 190);
-    lv_obj_set_size(_btn_primary, 132, 44);
+    lv_obj_set_pos(_btn_primary, 54, 190);
+    lv_obj_set_size(_btn_primary, 112, 44);
     style_flat_box(_btn_primary, COL_GEMINI_BLUE, 12);
     _lbl_primary = lv_label_create(_btn_primary);
     lv_obj_center(_lbl_primary);
-    lv_obj_set_style_text_font(_lbl_primary, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(_lbl_primary, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_primary, lv_color_hex(COL_WHITE), 0);
     lv_label_set_text(_lbl_primary, "TALK");
     lv_obj_add_event_cb(
@@ -1493,7 +1661,7 @@ void AppGemini::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_vol_up = make_btn(204, 52, COL_CARD, "VOL+", &lv_font_montserrat_12);
+    _btn_vol_up = make_btn(_root_cont, 170, 190, 46, 44, COL_CARD, "VOL+", &lv_font_montserrat_12);
     lv_obj_add_event_cb(
         _btn_vol_up,
         [](lv_event_t* e) {
@@ -1501,13 +1669,121 @@ void AppGemini::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_exit = make_btn(262, 50, COL_CARD_HI, "EXIT", &lv_font_montserrat_12);
+    _btn_settings = make_btn(_root_cont, 220, 190, 46, 44, COL_CARD, LV_SYMBOL_SETTINGS, &lv_font_montserrat_16);
+    lv_obj_add_event_cb(
+        _btn_settings,
+        [](lv_event_t* e) {
+            static_cast<AppGemini*>(lv_event_get_user_data(e))->open_settings();
+        },
+        LV_EVENT_CLICKED, this);
+
+    _btn_exit = make_btn(_root_cont, 270, 190, 46, 44, COL_CARD_HI, "EXIT", &lv_font_montserrat_12);
     lv_obj_add_event_cb(
         _btn_exit,
         [](lv_event_t* e) {
             static_cast<AppGemini*>(lv_event_get_user_data(e))->close();
         },
         LV_EVENT_CLICKED, this);
+
+    /* ====================== SETTINGS OVERLAY (VOICE & PITCH) ====================== */
+    _settings_cont = lv_obj_create(_root_cont);
+    lv_obj_set_size(_settings_cont, W, H);
+    lv_obj_set_pos(_settings_cont, 0, 0);
+    style_flat_box(_settings_cont, COL_BG, 0);
+    lv_obj_add_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* lbl_shdr = lv_label_create(_settings_cont);
+    lv_obj_set_pos(lbl_shdr, 10, 10);
+    lv_obj_set_size(lbl_shdr, 240, 24);
+    lv_obj_set_style_text_font(lbl_shdr, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl_shdr, lv_color_hex(COL_GEMINI_BLUE), 0);
+    lv_label_set_text(lbl_shdr, "< VOICE & PITCH");
+    lv_obj_add_flag(lbl_shdr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        lbl_shdr,
+        [](lv_event_t* e) {
+            static_cast<AppGemini*>(lv_event_get_user_data(e))->close_settings();
+        },
+        LV_EVENT_CLICKED, this);
+
+    // Row 1: Voice selector (< | VOICE | >)
+    lv_obj_t* lbl_vcap = lv_label_create(_settings_cont);
+    lv_obj_set_pos(lbl_vcap, 12, 38);
+    lv_obj_set_style_text_font(lbl_vcap, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_vcap, lv_color_hex(COL_DIM), 0);
+    lv_label_set_text(lbl_vcap, "VOICE");
+
+    lv_obj_t* btn_vprev = make_btn(_settings_cont, 10, 54, 52, 46, COL_CARD_HI, LV_SYMBOL_LEFT, &lv_font_montserrat_16);
+    lv_obj_add_event_cb(
+        btn_vprev,
+        [](lv_event_t* e) {
+            static_cast<AppGemini*>(lv_event_get_user_data(e))->cycle_voice(-1);
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* vcard = lv_obj_create(_settings_cont);
+    lv_obj_set_pos(vcard, 68, 54);
+    lv_obj_set_size(vcard, 184, 46);
+    style_flat_box(vcard, COL_CARD, 10);
+    _lbl_voice_val = lv_label_create(vcard);
+    lv_obj_center(_lbl_voice_val);
+    lv_obj_set_style_text_align(_lbl_voice_val, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_voice_val, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lbl_voice_val, lv_color_hex(COL_WHITE), 0);
+
+    lv_obj_t* btn_vnext =
+        make_btn(_settings_cont, 258, 54, 52, 46, COL_CARD_HI, LV_SYMBOL_RIGHT, &lv_font_montserrat_16);
+    lv_obj_add_event_cb(
+        btn_vnext,
+        [](lv_event_t* e) {
+            static_cast<AppGemini*>(lv_event_get_user_data(e))->cycle_voice(1);
+        },
+        LV_EVENT_CLICKED, this);
+
+    // Row 2: Pitch selector (- | PITCH | +)
+    lv_obj_t* lbl_pcap = lv_label_create(_settings_cont);
+    lv_obj_set_pos(lbl_pcap, 12, 108);
+    lv_obj_set_style_text_font(lbl_pcap, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_pcap, lv_color_hex(COL_DIM), 0);
+    lv_label_set_text(lbl_pcap, "PITCH (LIVE)");
+
+    lv_obj_t* btn_pdn = make_btn(_settings_cont, 10, 124, 52, 46, COL_CARD_HI, "-", &lv_font_montserrat_20);
+    lv_obj_add_event_cb(
+        btn_pdn,
+        [](lv_event_t* e) {
+            static_cast<AppGemini*>(lv_event_get_user_data(e))->change_pitch(-PITCH_STEP_PCT);
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* pcard = lv_obj_create(_settings_cont);
+    lv_obj_set_pos(pcard, 68, 124);
+    lv_obj_set_size(pcard, 184, 46);
+    style_flat_box(pcard, COL_CARD, 10);
+    _lbl_pitch_val = lv_label_create(pcard);
+    lv_obj_center(_lbl_pitch_val);
+    lv_obj_set_style_text_align(_lbl_pitch_val, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_pitch_val, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lbl_pitch_val, lv_color_hex(COL_WHITE), 0);
+
+    lv_obj_t* btn_pup = make_btn(_settings_cont, 258, 124, 52, 46, COL_CARD_HI, "+", &lv_font_montserrat_20);
+    lv_obj_add_event_cb(
+        btn_pup,
+        [](lv_event_t* e) {
+            static_cast<AppGemini*>(lv_event_get_user_data(e))->change_pitch(PITCH_STEP_PCT);
+        },
+        LV_EVENT_CLICKED, this);
+
+    // Bottom Apply & Back button
+    lv_obj_t* btn_sback =
+        make_btn(_settings_cont, 50, 186, 220, 42, COL_GEMINI_BLUE, "APPLY & BACK", &lv_font_montserrat_14);
+    lv_obj_add_event_cb(
+        btn_sback,
+        [](lv_event_t* e) {
+            static_cast<AppGemini*>(lv_event_get_user_data(e))->close_settings();
+        },
+        LV_EVENT_CLICKED, this);
+
+    refresh_settings_ui();
 }
 
 void AppGemini::destroy_ui()
@@ -1531,7 +1807,11 @@ void AppGemini::destroy_ui()
         _btn_primary    = nullptr;
         _lbl_primary    = nullptr;
         _btn_vol_up     = nullptr;
+        _btn_settings   = nullptr;
         _btn_exit       = nullptr;
+        _settings_cont  = nullptr;
+        _lbl_voice_val  = nullptr;
+        _lbl_pitch_val  = nullptr;
     }
 }
 
