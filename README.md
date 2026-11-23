@@ -21,8 +21,10 @@ The **factory firmware** is feature-rich, including an AI Agent, lively and expr
 The firmware also includes a built-in **MicroSD Music Player (`MUSIC`)** app integrated into the launcher menu alongside `AI.AGENT`, `AVATAR`, `DANCE`, and `SETUP`:
 
 - **Offline audio playback**: Plays `.wav` (PCM 8/16-bit, mono/stereo) and `.mp3` files from a FAT32 microSD card mounted at `/sd` (recursive scan up to 3 levels deep, PSRAM-backed track index supporting 1,000+ songs).
-- **Touch UI**: Top status header (track title, battery indicator, touch-seekable progress bar, elapsed/total time, volume), animated StackChan face with floating musical notes, and a 6-button control bar (`VOL-`, `Prev`, `Play/Pause`, `Next`, `VOL+`, `Settings`).
-- **Settings, Playlist & Head calibration**: Configure `LOOP` (`OFF` / `1` / `ALL`), `SHUFFLE`, `LIGHTS` (12 RGB LEDs synced to the beat), `MOVE` (rhythm head sway), browse the paginated `PLAYLIST`, and calibrate the neutral `HEAD` angle.
+- **Internet Radio over Wi-Fi**: Streams live HTTP/HTTPS MP3 radio stations directly inside `MUSIC -> Settings -> RADIO` with a 96 KB PSRAM prefetch ring buffer. Includes built-in stations and supports custom `Name|URL` entries in `/sd/radio.txt`.
+- **Web Remote, QR Code & Wi-Fi MP3 Upload**: Open `MUSIC -> Settings -> WEB/QR` to launch a local web server (`http://<device-ip>/`) with a scannable QR code. From any phone or PC browser on the same Wi-Fi, search/play SD tracks, control transport/volume/lights/motion, play or add radio stations, and upload `.mp3`/`.wav` files directly to `/sd/`.
+- **Touch UI**: Top status header (track/station title, battery indicator, touch-seekable progress bar, elapsed/total time, volume), animated StackChan face with floating musical notes, and a 6-button control bar (`VOL-`, `Prev`, `Play/Pause`, `Next`, `VOL+`, `Settings`).
+- **Settings, Playlist & Head calibration**: Configure `LOOP` (`OFF` / `1` / `ALL`), `SHUFFLE`, `LIGHTS` (12 RGB LEDs synced to the beat), `MOVE` (rhythm head sway), browse `SD LIST`, `RADIO`, `WEB/QR`, and calibrate the neutral `HEAD` angle.
 - **Persistent preferences**: Volume, playback toggles, head calibration, and the last played track are automatically saved to NVS and restored on next launch.
 - **Menu visibility toggle**: Can be shown or hidden from `SETUP -> Apps -> App visibility`.
 

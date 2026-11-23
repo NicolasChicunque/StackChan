@@ -41,5 +41,5 @@ idf.py flash
 - `APP.CENTER` – Online firmware/app launcher
 - `EZDATA` – EzData cloud integration
 - `DANCE` – BLE dance controller
-- `MUSIC` – Offline microSD Music Player (`.wav` & `.mp3` from `/sd`, rhythm RGB LEDs & servo sway, NVS-persisted settings and last track)
+- `MUSIC` – MicroSD Music Player, Internet Radio & Web Remote (`.wav` & `.mp3` from `/sd`, live Wi-Fi MP3 radio streaming, phone/PC Web Remote with QR code and Wi-Fi MP3 upload, rhythm RGB LEDs & servo sway, NVS-persisted settings)
 - `SETUP` – Device settings, hardware tests, and app visibility toggles

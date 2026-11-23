@@ -20,6 +20,7 @@
 #include <audio/audio_codec.h>
 #include <settings.h>
 
+#include <cJSON.h>
 #include <esp_heap_caps.h>
 #include <esp_vfs_fat.h>
 #include <sdmmc_cmd.h>
@@ -46,7 +47,7 @@ LV_IMAGE_DECLARE(icon_music);
 namespace {
 
 constexpr const char* TAG        = "MUSIC";
-constexpr const char* APP_VERSION = "v4.0";
+constexpr const char* APP_VERSION = "v4.1";
 constexpr const char* TRACK_DIR  = "/sd";
 
 // NVS keys (single namespace for all player preferences and last track)
@@ -88,6 +89,7 @@ constexpr uint32_t COL_WHITE     = 0xFFFFFF;
 constexpr uint32_t COL_RED       = 0xE74C3C;
 constexpr uint32_t COL_GREEN     = 0x34C759;
 constexpr uint32_t COL_PLAY_ON   = 0x1F6B3A;
+constexpr uint32_t COL_PURPLE    = 0x7B2CBF;
 
 constexpr uint32_t PALETTE[8] = {
     0xFF3B30, 0xFF9500, 0xFFCC00, 0x34C759,
@@ -132,15 +134,16 @@ struct CfgBtnSpec {
 
 // Settings screen layout:
 // Row 1: LOOP | SHUFFLE | LIGHTS | MOVE
-// Row 2: PLAYLIST | HEAD | EXIT
-constexpr CfgBtnSpec CFG_BTN_SPECS[7] = {
-    {"loop",     8,   48,  73, 56},
-    {"shuf",     85,  48,  73, 56},
-    {"lights",   162, 48,  73, 56},
-    {"move",     239, 48,  73, 56},
-    {"playlist", 8,   116, 98, 52},
-    {"head",     111, 116, 98, 52},
-    {"menu",     214, 116, 98, 52},
+// Row 2: PLAYLIST | RADIO | WEB/QR | HEAD
+constexpr CfgBtnSpec CFG_BTN_SPECS[8] = {
+    {"loop",     8,   42, 73, 54},
+    {"shuf",     85,  42, 73, 54},
+    {"lights",   162, 42, 73, 54},
+    {"move",     239, 42, 73, 54},
+    {"playlist", 8,   102, 73, 54},
+    {"radio",    85,  102, 73, 54},
+    {"web",      162, 102, 73, 54},
+    {"head",     239, 102, 73, 54},
 };
 
 uint16_t read_u16_le(const uint8_t* p)
@@ -204,6 +207,10 @@ AppMusicPlayer::AppMusicPlayer()
 AppMusicPlayer::~AppMusicPlayer()
 {
     stop_audio_task();
+    if (_wifi_svc) {
+        _wifi_svc->shutdown();
+        _wifi_svc.reset();
+    }
     unmount_sd();
 }
 
@@ -222,11 +229,17 @@ void AppMusicPlayer::onOpen()
     _last_beat            = 0xFFFFFFFF;
     _playing              = false;
     _started              = false;
+    _radio_mode           = false;
+    _sd_upload_active     = false;
     _track_eof            = false;
+    _cmd_reload           = false;
+    _cmd_close_file       = false;
+    _audio_file_open      = false;
     _elapsed_ms           = 0;
     _duration_ms          = 0;
     _byte_rate            = 0;
     _decoded_bytes        = 0;
+    _last_qr_url.clear();
 
     // 1. Load saved preferences and last played track from NVS
     load_saved_prefs();
@@ -267,6 +280,10 @@ void AppMusicPlayer::onOpen()
         _duration_ms = info.duration_ms;
         _byte_rate   = info.byte_rate;
     }
+    update_now_playing_title();
+
+    // 4b. Initialize companion Wi-Fi Radio & Web Remote service (lazy Wi-Fi connect)
+    init_wifi_service();
 
     // 5. Start audio decoding task (stack in PSRAM)
     start_audio_task();
@@ -288,6 +305,8 @@ void AppMusicPlayer::onRunning()
 {
     uint32_t now = GetHAL().millis();
 
+    process_web_commands();
+
     if (!_status_msg.empty() && static_cast<int32_t>(now - _status_until) >= 0) {
         _status_msg.clear();
         LvglLockGuard lock;
@@ -300,6 +319,8 @@ void AppMusicPlayer::onRunning()
         refresh_main_ui(now);
         if (_mode == ScreenMode::List) {
             refresh_list_ui();
+        } else if (_mode == ScreenMode::Radio) {
+            refresh_radio_ui();
         }
     }
 
@@ -327,6 +348,16 @@ void AppMusicPlayer::onRunning()
                 _last_time_tick = now;
                 refresh_head_ui();
             }
+        } else if (_mode == ScreenMode::Radio) {
+            if (now - _last_time_tick >= 600) {
+                _last_time_tick = now;
+                refresh_radio_ui();
+            }
+        } else if (_mode == ScreenMode::WebQr) {
+            if (now - _last_time_tick >= 500) {
+                _last_time_tick = now;
+                refresh_web_qr_ui();
+            }
         }
 
         view::update_home_indicator();
@@ -343,6 +374,10 @@ void AppMusicPlayer::onClose()
 
     stop_playback();
     stop_audio_task();
+    if (_wifi_svc) {
+        _wifi_svc->shutdown();
+        _wifi_svc.reset();
+    }
 
     move_home(500);
     rgb_off();
@@ -470,13 +505,15 @@ std::string AppMusicPlayer::fmt_time(int32_t ms)
 
 void AppMusicPlayer::scan_tracks()
 {
-    _tracks.clear();
+    std::vector<TrackEntry, PsramAllocator<TrackEntry>> found;
     _scan_error   = false;
     _scan_entries = 0;
     _scan_other_ext.clear();
     _scan_other_n = 0;
 
     if (!_sd_mounted) {
+        std::lock_guard<std::mutex> lk(_tracks_mutex);
+        _tracks.clear();
         return;
     }
 
@@ -484,7 +521,7 @@ void AppMusicPlayer::scan_tracks()
     std::vector<std::pair<std::string, int>> stack;
     stack.push_back({TRACK_DIR, 0});
 
-    while (!stack.empty() && static_cast<int>(_tracks.size()) < MAX_TRACKS) {
+    while (!stack.empty() && static_cast<int>(found.size()) < MAX_TRACKS) {
         auto [dir_path, depth] = stack.back();
         stack.pop_back();
 
@@ -511,13 +548,13 @@ void AppMusicPlayer::scan_tracks()
             std::string full_path = dir_path + "/" + name;
 
             if (is_audio_name(name)) {
-                if (static_cast<int>(_tracks.size()) < MAX_TRACKS) {
+                if (static_cast<int>(found.size()) < MAX_TRACKS) {
                     TrackEntry te;
                     te.path.assign(full_path.c_str(), full_path.size());
                     std::string title_tmp = base_title(full_path);
                     te.title.assign(title_tmp.c_str(), title_tmp.size());
                     te.is_mp3 = (ext_of(name) == ".mp3");
-                    _tracks.push_back(std::move(te));
+                    found.push_back(std::move(te));
                 }
                 continue;
             }
@@ -544,9 +581,14 @@ void AppMusicPlayer::scan_tracks()
         closedir(dir);
     }
 
-    std::sort(_tracks.begin(), _tracks.end(), [](const TrackEntry& a, const TrackEntry& b) {
+    std::sort(found.begin(), found.end(), [](const TrackEntry& a, const TrackEntry& b) {
         return a.path < b.path;
     });
+
+    {
+        std::lock_guard<std::mutex> lk(_tracks_mutex);
+        _tracks.swap(found);
+    }
 
     for (const auto& kv : exts) {
         if (kv.second > _scan_other_n) {
@@ -719,7 +761,9 @@ void AppMusicPlayer::audio_task_loop()
 
     FILE* file = nullptr;
     AudioProbeInfo probe;
-    bool is_mp3 = false;
+    bool is_mp3          = false;
+    bool is_radio        = false;
+    bool radio_buffering = false;
 
     mp3dec_t* mp3d = static_cast<mp3dec_t*>(heap_caps_malloc(sizeof(mp3dec_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!mp3d) {
@@ -753,6 +797,7 @@ void AppMusicPlayer::audio_task_loop()
             std::fclose(file);
             file = nullptr;
         }
+        _audio_file_open.store(false);
         mp3_buf_filled = 0;
     };
 
@@ -803,6 +848,10 @@ void AppMusicPlayer::audio_task_loop()
     };
 
     while (_task_running.load()) {
+        if (_cmd_close_file.exchange(false)) {
+            close_file();
+        }
+
         if (_cmd_reload.exchange(false)) {
             close_file();
             std::string path;
@@ -811,13 +860,25 @@ void AppMusicPlayer::audio_task_loop()
                 std::lock_guard<std::mutex> lk(_audio_mutex);
                 path     = _active_path;
                 is_mp3   = _active_is_mp3;
+                is_radio = _active_is_radio;
                 start_ms = _target_start_ms;
                 probe    = _active_probe;
             }
 
-            if (!path.empty() && probe.valid) {
+            if (is_radio) {
+                is_mp3             = true;
+                radio_buffering    = true;
+                base_start_ms      = 0;
+                played_out_samples = 0;
+                _elapsed_ms.store(0);
+                _decoded_bytes.store(0);
+                if (mp3d) {
+                    mp3dec_init(mp3d);
+                }
+            } else if (!path.empty() && probe.valid) {
                 file = std::fopen(path.c_str(), "rb");
                 if (file) {
+                    _audio_file_open.store(true);
                     uint32_t seek_byte = probe.data_offset;
                     if (start_ms > 0 && probe.byte_rate > 0) {
                         uint32_t offset = static_cast<uint32_t>((static_cast<uint64_t>(start_ms) * probe.byte_rate) / 1000ULL);
@@ -841,7 +902,79 @@ void AppMusicPlayer::audio_task_loop()
             }
         }
 
-        if (!_playing.load() || !file) {
+        if (!_playing.load()) {
+            vTaskDelay(pdMS_TO_TICKS(15));
+            continue;
+        }
+
+        if (is_radio) {
+            if (!_wifi_svc || !mp3d || !mp3_buf || !mp3_pcm) {
+                _playing.store(false);
+                continue;
+            }
+
+            if (radio_buffering) {
+                if (_wifi_svc->radio_buffered_bytes() < 6144 && !_wifi_svc->is_radio_eof()) {
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                    continue;
+                }
+                radio_buffering = false;
+            }
+
+            if (mp3_buf_filled < 4096) {
+                size_t space = MP3_BUF_SIZE - mp3_buf_filled;
+                size_t got   = _wifi_svc->pop_radio_bytes(mp3_buf + mp3_buf_filled, space);
+                mp3_buf_filled += got;
+            }
+
+            if (mp3_buf_filled == 0) {
+                if (_wifi_svc->is_radio_eof()) {
+                    _playing.store(false);
+                    _track_eof.store(true);
+                    continue;
+                }
+                radio_buffering = true;
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
+
+            mp3dec_frame_info_t frame_info = {};
+            int samples = mp3dec_decode_frame(mp3d, mp3_buf, static_cast<int>(mp3_buf_filled), mp3_pcm, &frame_info);
+            if (frame_info.frame_bytes > 0) {
+                size_t consumed = static_cast<size_t>(frame_info.frame_bytes);
+                if (consumed < mp3_buf_filled) {
+                    std::memmove(mp3_buf, mp3_buf + consumed, mp3_buf_filled - consumed);
+                    mp3_buf_filled -= consumed;
+                } else {
+                    mp3_buf_filled = 0;
+                }
+                _decoded_bytes.fetch_add(static_cast<uint32_t>(consumed));
+            } else {
+                if (_wifi_svc->is_radio_eof()) {
+                    mp3_buf_filled = 0;
+                    _playing.store(false);
+                    _track_eof.store(true);
+                    continue;
+                }
+                if (mp3_buf_filled >= MP3_BUF_SIZE) {
+                    mp3_buf_filled = 0;
+                } else {
+                    size_t got = _wifi_svc->pop_radio_bytes(mp3_buf + mp3_buf_filled, MP3_BUF_SIZE - mp3_buf_filled);
+                    mp3_buf_filled += got;
+                    if (got == 0) {
+                        vTaskDelay(pdMS_TO_TICKS(15));
+                    }
+                }
+                continue;
+            }
+
+            if (samples > 0 && frame_info.hz > 0 && frame_info.channels > 0) {
+                resample_and_output(mp3_pcm, samples, frame_info.channels, static_cast<uint32_t>(frame_info.hz));
+            }
+            continue;
+        }
+
+        if (!file) {
             vTaskDelay(pdMS_TO_TICKS(15));
             continue;
         }
@@ -975,6 +1108,11 @@ void AppMusicPlayer::play_track(int idx, int32_t start_ms)
         return;
     }
 
+    if (_wifi_svc) {
+        _wifi_svc->stop_radio();
+    }
+    _radio_mode = false;
+
     int n  = static_cast<int>(_tracks.size());
     _index = ((idx % n) + n) % n;
 
@@ -1003,6 +1141,7 @@ void AppMusicPlayer::play_track(int idx, int32_t start_ms)
         std::lock_guard<std::mutex> lk(_audio_mutex);
         _active_path     = tr_path;
         _active_is_mp3   = tr.is_mp3;
+        _active_is_radio = false;
         _target_start_ms = start_ms;
         _active_probe    = info;
     }
@@ -1015,12 +1154,75 @@ void AppMusicPlayer::play_track(int idx, int32_t start_ms)
     _audio_err.clear();
     _last_beat = 0xFFFFFFFF;
 
+    update_now_playing_title();
+
     // Persist last played track immediately
     save_last_track();
 }
 
+void AppMusicPlayer::play_radio(int station_idx)
+{
+    if (!_wifi_svc) {
+        return;
+    }
+    auto stations = _wifi_svc->get_stations();
+    if (stations.empty()) {
+        set_status("NO STATIONS");
+        return;
+    }
+
+    int n        = static_cast<int>(stations.size());
+    _radio_index = ((station_idx % n) + n) % n;
+    _radio_mode  = true;
+
+    _duration_ms.store(0);
+    _byte_rate.store(0);
+    _elapsed_ms.store(0);
+    _decoded_bytes.store(0);
+
+    {
+        std::lock_guard<std::mutex> lk(_audio_mutex);
+        _active_path     = stations[_radio_index].url;
+        _active_is_mp3   = true;
+        _active_is_radio = true;
+        _target_start_ms = 0;
+        _active_probe    = AudioProbeInfo{};
+    }
+
+    _track_eof  = false;
+    _cmd_reload = true;
+    _playing    = true;
+    _started    = true;
+    _audio_err.clear();
+    _last_beat = 0xFFFFFFFF;
+    set_status("TUNING RADIO...", 3500);
+    update_now_playing_title();
+
+    _wifi_svc->start_radio(stations[_radio_index].url);
+}
+
 void AppMusicPlayer::toggle_play()
 {
+    if (_radio_mode.load()) {
+        if (_playing.load()) {
+            _playing = false;
+            if (_wifi_svc) {
+                _wifi_svc->stop_radio();
+            }
+            if (_robot_move) {
+                move_home(500);
+            }
+            if (_lights_on) {
+                set_all_rgb(0x001028);
+            } else {
+                rgb_off();
+            }
+        } else {
+            play_radio(_radio_index);
+        }
+        return;
+    }
+
     if (_tracks.empty()) {
         return;
     }
@@ -1051,10 +1253,17 @@ void AppMusicPlayer::stop_playback()
 {
     _playing = false;
     _started = false;
+    if (_wifi_svc) {
+        _wifi_svc->stop_radio();
+    }
 }
 
 void AppMusicPlayer::seek_to(int32_t ms)
 {
+    if (_radio_mode.load()) {
+        set_status("LIVE RADIO");
+        return;
+    }
     if (_tracks.empty()) {
         return;
     }
@@ -1074,6 +1283,10 @@ void AppMusicPlayer::seek_to(int32_t ms)
 
 void AppMusicPlayer::change_track(int delta)
 {
+    if (_radio_mode.load()) {
+        play_radio(_radio_index + delta);
+        return;
+    }
     if (_tracks.empty()) {
         return;
     }
@@ -1087,7 +1300,12 @@ void AppMusicPlayer::change_track(int delta)
 
 void AppMusicPlayer::change_volume(int delta)
 {
-    _volume = std::clamp(_volume + delta, 0, 100);
+    set_volume(_volume + delta);
+}
+
+void AppMusicPlayer::set_volume(int vol)
+{
+    _volume = std::clamp(vol, 0, 100);
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume), false);
     save_settings();
     set_status("VOL " + std::to_string(_volume));
@@ -1151,6 +1369,22 @@ int AppMusicPlayer::random_index() const
 
 void AppMusicPlayer::track_finished()
 {
+    if (_radio_mode.load()) {
+        _playing = false;
+        _started = false;
+        if (_wifi_svc) {
+            std::string err = _wifi_svc->get_radio_error();
+            if (!err.empty()) {
+                _audio_err = err;
+            }
+        }
+        rgb_off();
+        if (_robot_move) {
+            move_home(500);
+        }
+        return;
+    }
+
     int count = static_cast<int>(_tracks.size());
     if (_loop_mode == 1) {
         play_track(_index, 0);
@@ -1168,6 +1402,262 @@ void AppMusicPlayer::track_finished()
         if (_robot_move) {
             move_home(500);
         }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                      Wi-Fi Radio & Web Remote Bridge                       */
+/* -------------------------------------------------------------------------- */
+
+void AppMusicPlayer::init_wifi_service()
+{
+    _wifi_svc = std::make_unique<MusicWifiService>();
+    _wifi_svc->load_stations(_sd_mounted);
+
+    MusicWifiService::WebCallbacks cbs;
+    cbs.get_status_json = [this]() { return build_status_json(); };
+    cbs.get_tracks_json = [this](const std::string& q, int page, int limit) {
+        return build_tracks_json(q, page, limit);
+    };
+    cbs.enqueue_cmd = [this](const MusicWifiService::WebCommand& cmd) {
+        std::lock_guard<std::mutex> lk(_cmd_mutex);
+        if (_web_cmds.size() < 16) {
+            _web_cmds.push_back(cmd);
+        }
+    };
+    cbs.begin_sd_write = [this]() { return handle_begin_sd_write(); };
+    cbs.end_sd_write   = [this](bool ok, const std::string& filename) { handle_end_sd_write(ok, filename); };
+
+    _wifi_svc->init(cbs);
+}
+
+void AppMusicPlayer::update_now_playing_title()
+{
+    std::string title;
+    if (_radio_mode.load() && _wifi_svc) {
+        auto stations = _wifi_svc->get_stations();
+        if (_radio_index >= 0 && _radio_index < static_cast<int>(stations.size())) {
+            title = stations[_radio_index].name;
+        }
+    } else if (!_tracks.empty() && _index >= 0 && _index < static_cast<int>(_tracks.size())) {
+        title.assign(_tracks[_index].title.c_str(), _tracks[_index].title.size());
+    }
+    std::lock_guard<std::mutex> lk(_title_mutex);
+    _now_playing_title = title;
+}
+
+void AppMusicPlayer::process_web_commands()
+{
+    std::deque<MusicWifiService::WebCommand> pending;
+    std::string uploaded_file;
+    {
+        std::lock_guard<std::mutex> lk(_cmd_mutex);
+        if (_web_cmds.empty() && _uploaded_notice.empty()) {
+            return;
+        }
+        pending.swap(_web_cmds);
+        uploaded_file.swap(_uploaded_notice);
+    }
+
+    bool ui_dirty = false;
+    for (const auto& cmd : pending) {
+        if (cmd.action == "toggle") {
+            toggle_play();
+            ui_dirty = true;
+        } else if (cmd.action == "next") {
+            change_track(1);
+            ui_dirty = true;
+        } else if (cmd.action == "prev") {
+            change_track(-1);
+            ui_dirty = true;
+        } else if (cmd.action == "play") {
+            play_track(cmd.index, 0);
+            ui_dirty = true;
+        } else if (cmd.action == "radio") {
+            play_radio(cmd.index);
+            ui_dirty = true;
+        } else if (cmd.action == "vol") {
+            set_volume(cmd.value);
+            ui_dirty = true;
+        } else if (cmd.action == "loop") {
+            cycle_loop();
+            ui_dirty = true;
+        } else if (cmd.action == "shuffle") {
+            toggle_shuffle();
+            ui_dirty = true;
+        } else if (cmd.action == "lights") {
+            toggle_lights();
+            ui_dirty = true;
+        } else if (cmd.action == "move") {
+            toggle_move();
+            ui_dirty = true;
+        } else if (cmd.action == "rescan") {
+            scan_tracks();
+            if (!_tracks.empty() && _index >= static_cast<int>(_tracks.size())) {
+                _index = 0;
+            }
+            if (!uploaded_file.empty()) {
+                set_status("ADDED " + clip_text(uploaded_file, 18), 3500);
+            }
+            update_now_playing_title();
+            ui_dirty = true;
+        }
+    }
+
+    if (ui_dirty) {
+        LvglLockGuard lock;
+        uint32_t now = GetHAL().millis();
+        refresh_main_ui(now);
+        refresh_avatar_anim(now);
+        if (_mode == ScreenMode::Settings) {
+            refresh_settings_ui();
+        } else if (_mode == ScreenMode::List) {
+            refresh_list_ui();
+        } else if (_mode == ScreenMode::Radio) {
+            refresh_radio_ui();
+        }
+    }
+}
+
+std::string AppMusicPlayer::build_status_json() const
+{
+    cJSON* root = cJSON_CreateObject();
+    std::string title;
+    {
+        std::lock_guard<std::mutex> lk(_title_mutex);
+        title = _now_playing_title;
+    }
+    int total_tracks = 0;
+    {
+        std::lock_guard<std::mutex> lk(_tracks_mutex);
+        total_tracks = static_cast<int>(_tracks.size());
+    }
+
+    bool is_rad = _radio_mode.load();
+    cJSON_AddStringToObject(root, "title", title.c_str());
+    cJSON_AddBoolToObject(root, "playing", _playing.load());
+    cJSON_AddBoolToObject(root, "radio", is_rad);
+    cJSON_AddNumberToObject(root, "radio_idx", _radio_index);
+    cJSON_AddNumberToObject(root, "index", _index);
+    cJSON_AddNumberToObject(root, "total", total_tracks);
+    cJSON_AddNumberToObject(root, "elapsed", _elapsed_ms.load());
+    cJSON_AddNumberToObject(root, "duration", _duration_ms.load());
+    cJSON_AddNumberToObject(root, "volume", _volume);
+    cJSON_AddNumberToObject(root, "loop", _loop_mode);
+    cJSON_AddBoolToObject(root, "shuffle", _shuffle_on);
+    cJSON_AddBoolToObject(root, "lights", _lights_on);
+    cJSON_AddBoolToObject(root, "move", _robot_move);
+    cJSON_AddNumberToObject(root, "batt", GetHAL().getBatteryLevel());
+
+    std::string rstat = "READY";
+    if (is_rad && _wifi_svc) {
+        std::string err = _wifi_svc->get_radio_error();
+        if (!err.empty()) {
+            rstat = err;
+        } else if (_wifi_svc->is_radio_connected()) {
+            rstat = "LIVE (" + std::to_string(_wifi_svc->radio_buffered_bytes() / 1024) + " KB)";
+        } else if (_playing.load()) {
+            rstat = "BUFFERING...";
+        } else {
+            rstat = "PAUSED";
+        }
+    }
+    cJSON_AddStringToObject(root, "radio_status", rstat.c_str());
+
+    char* str = cJSON_PrintUnformatted(root);
+    std::string out(str ? str : "{}");
+    if (str) {
+        cJSON_free(str);
+    }
+    cJSON_Delete(root);
+    return out;
+}
+
+std::string AppMusicPlayer::build_tracks_json(const std::string& q, int page, int limit) const
+{
+    std::string ql = q;
+    for (char& c : ql) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* arr  = cJSON_AddArrayToObject(root, "items");
+
+    int matched = 0;
+    int start   = page * limit;
+    int end     = start + limit;
+
+    {
+        std::lock_guard<std::mutex> lk(_tracks_mutex);
+        for (int i = 0; i < static_cast<int>(_tracks.size()); ++i) {
+            const auto& tr = _tracks[i];
+            if (!ql.empty()) {
+                bool hit = false;
+                size_t n = tr.title.size();
+                if (n >= ql.size()) {
+                    for (size_t pos = 0; pos + ql.size() <= n; ++pos) {
+                        bool eq = true;
+                        for (size_t k = 0; k < ql.size(); ++k) {
+                            char c = static_cast<char>(std::tolower(static_cast<unsigned char>(tr.title[pos + k])));
+                            if (c != ql[k]) {
+                                eq = false;
+                                break;
+                            }
+                        }
+                        if (eq) {
+                            hit = true;
+                            break;
+                        }
+                    }
+                }
+                if (!hit) {
+                    continue;
+                }
+            }
+            if (matched >= start && matched < end) {
+                cJSON* it = cJSON_CreateObject();
+                cJSON_AddNumberToObject(it, "i", i);
+                std::string t(tr.title.c_str(), tr.title.size());
+                cJSON_AddStringToObject(it, "t", t.c_str());
+                cJSON_AddBoolToObject(it, "m", tr.is_mp3);
+                cJSON_AddItemToArray(arr, it);
+            }
+            ++matched;
+        }
+    }
+
+    cJSON_AddNumberToObject(root, "total", matched);
+
+    char* str = cJSON_PrintUnformatted(root);
+    std::string out(str ? str : "{\"total\":0,\"items\":[]}");
+    if (str) {
+        cJSON_free(str);
+    }
+    cJSON_Delete(root);
+    return out;
+}
+
+bool AppMusicPlayer::handle_begin_sd_write()
+{
+    if (_sd_upload_active.exchange(true)) {
+        return false;
+    }
+    // Pause playback and close any open SD file cleanly before writing uploaded file
+    _playing        = false;
+    _cmd_close_file = true;
+    for (int i = 0; i < 40 && _audio_file_open.load(); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(15));
+    }
+    return !_audio_file_open.load();
+}
+
+void AppMusicPlayer::handle_end_sd_write(bool success, const std::string& filename)
+{
+    _sd_upload_active = false;
+    if (success) {
+        std::lock_guard<std::mutex> lk(_cmd_mutex);
+        _uploaded_notice = filename;
+        _web_cmds.push_back({"rescan", 0, 0});
     }
 }
 
@@ -1324,7 +1814,11 @@ void AppMusicPlayer::build_ui()
         _lbl_title,
         [](lv_event_t* e) {
             auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
-            self->open_list();
+            if (self->_radio_mode.load()) {
+                self->open_radio();
+            } else {
+                self->open_list();
+            }
         },
         LV_EVENT_CLICKED, this);
 
@@ -1568,7 +2062,7 @@ void AppMusicPlayer::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         const auto& spec  = CFG_BTN_SPECS[i];
         _cfg_btns[i].name = spec.name;
 
@@ -1613,11 +2107,14 @@ void AppMusicPlayer::build_ui()
                 } else if (std::strcmp(nm, "playlist") == 0) {
                     self->open_list();
                     return;
+                } else if (std::strcmp(nm, "radio") == 0) {
+                    self->open_radio();
+                    return;
+                } else if (std::strcmp(nm, "web") == 0) {
+                    self->open_web_qr();
+                    return;
                 } else if (std::strcmp(nm, "head") == 0) {
                     self->switch_mode(ScreenMode::Head);
-                    return;
-                } else if (std::strcmp(nm, "menu") == 0) {
-                    self->close();
                     return;
                 }
                 self->refresh_settings_ui();
@@ -1625,10 +2122,10 @@ void AppMusicPlayer::build_ui()
             LV_EVENT_CLICKED, this);
     }
 
-    // Back button at the bottom of Settings
+    // Settings footer: BACK | EXIT
     lv_obj_t* btn_cfg_back = lv_button_create(_settings_cont);
-    lv_obj_set_pos(btn_cfg_back, 60, 186);
-    lv_obj_set_size(btn_cfg_back, 200, 38);
+    lv_obj_set_pos(btn_cfg_back, 8, 170);
+    lv_obj_set_size(btn_cfg_back, 194, 44);
     style_flat_box(btn_cfg_back, COL_PLAY_ON, 10);
     lv_obj_t* lbl_back = lv_label_create(btn_cfg_back);
     lv_obj_center(lbl_back);
@@ -1640,6 +2137,23 @@ void AppMusicPlayer::build_ui()
         [](lv_event_t* e) {
             auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
             self->switch_mode(ScreenMode::Main);
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_cfg_exit = lv_button_create(_settings_cont);
+    lv_obj_set_pos(btn_cfg_exit, 208, 170);
+    lv_obj_set_size(btn_cfg_exit, 104, 44);
+    style_flat_box(btn_cfg_exit, COL_CARD_HI, 10);
+    lv_obj_t* lbl_cfg_exit = lv_label_create(btn_cfg_exit);
+    lv_obj_center(lbl_cfg_exit);
+    lv_obj_set_style_text_font(lbl_cfg_exit, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_cfg_exit, lv_color_hex(COL_YELLOW), 0);
+    lv_label_set_text(lbl_cfg_exit, "EXIT");
+    lv_obj_add_event_cb(
+        btn_cfg_exit,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            self->close();
         },
         LV_EVENT_CLICKED, this);
 
@@ -1886,6 +2400,208 @@ void AppMusicPlayer::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
+    /* =========================== 5. RADIO VIEW ============================= */
+    _radio_cont = lv_obj_create(_root_screen);
+    lv_obj_set_size(_radio_cont, W, H);
+    lv_obj_set_pos(_radio_cont, 0, 0);
+    style_flat_box(_radio_cont, COL_BG, 0);
+    lv_obj_add_flag(_radio_cont, LV_OBJ_FLAG_HIDDEN);
+
+    _lbl_radio_hdr = lv_label_create(_radio_cont);
+    lv_obj_set_pos(_lbl_radio_hdr, 10, 4);
+    lv_obj_set_size(_lbl_radio_hdr, 150, 22);
+    lv_obj_set_style_text_font(_lbl_radio_hdr, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(_lbl_radio_hdr, lv_color_hex(COL_TEXT), 0);
+    lv_label_set_text(_lbl_radio_hdr, "< RADIO");
+    lv_obj_add_flag(_lbl_radio_hdr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        _lbl_radio_hdr,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            self->switch_mode(ScreenMode::Main);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _lbl_radio_count = lv_label_create(_radio_cont);
+    lv_obj_set_pos(_lbl_radio_count, 160, 7);
+    lv_obj_set_width(_lbl_radio_count, 152);
+    lv_obj_set_style_text_align(_lbl_radio_count, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(_lbl_radio_count, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_radio_count, lv_color_hex(COL_DIM), 0);
+
+    for (int i = 0; i < PAGE_ROWS; ++i) {
+        lv_obj_t* row  = lv_button_create(_radio_cont);
+        _radio_rows[i] = row;
+        lv_obj_set_pos(row, 8, 28 + i * 29);
+        lv_obj_set_size(row, 304, 26);
+        style_flat_box(row, COL_CARD, 8);
+
+        lv_obj_t* rlbl     = lv_label_create(row);
+        _radio_row_lbls[i] = rlbl;
+        lv_obj_set_pos(rlbl, 10, 4);
+        lv_obj_set_width(rlbl, 284);
+        lv_label_set_long_mode(rlbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_font(rlbl, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(rlbl, lv_color_hex(COL_TEXT), 0);
+
+        lv_obj_add_event_cb(
+            row,
+            [](lv_event_t* e) {
+                auto* self      = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+                lv_obj_t* t_row = static_cast<lv_obj_t*>(lv_event_get_target(e));
+                for (int r = 0; r < PAGE_ROWS; ++r) {
+                    if (self->_radio_rows[r] == t_row) {
+                        int st_idx = self->_radio_page * PAGE_ROWS + r;
+                        if (self->_wifi_svc && st_idx < self->_wifi_svc->station_count()) {
+                            self->play_radio(st_idx);
+                            self->switch_mode(ScreenMode::Main);
+                        }
+                        break;
+                    }
+                }
+            },
+            LV_EVENT_CLICKED, this);
+    }
+
+    _lbl_radio_info = lv_label_create(_radio_cont);
+    lv_obj_set_pos(_lbl_radio_info, 8, 178);
+    lv_obj_set_width(_lbl_radio_info, 304);
+    lv_label_set_long_mode(_lbl_radio_info, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(_lbl_radio_info, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_radio_info, lv_color_hex(COL_DIM), 0);
+
+    auto make_radio_footer_btn = [&](int x, int w, const char* txt, uint32_t bg = COL_CARD_HI) {
+        lv_obj_t* b = lv_button_create(_radio_cont);
+        lv_obj_set_pos(b, x, 204);
+        lv_obj_set_size(b, w, 30);
+        style_flat_box(b, bg, 8);
+        lv_obj_t* l = lv_label_create(b);
+        lv_obj_center(l);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(COL_TEXT), 0);
+        lv_label_set_text(l, txt);
+        return b;
+    };
+
+    lv_obj_t* btn_rad_prev = make_radio_footer_btn(8, 72, "PREV");
+    lv_obj_add_event_cb(
+        btn_rad_prev,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            if (self->_radio_page > 0) {
+                self->_radio_page--;
+                self->refresh_radio_ui();
+            }
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_rad_next = make_radio_footer_btn(85, 72, "NEXT");
+    lv_obj_add_event_cb(
+        btn_rad_next,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            int count  = self->_wifi_svc ? self->_wifi_svc->station_count() : 0;
+            int pages  = std::max(1, (count + PAGE_ROWS - 1) / PAGE_ROWS);
+            if (self->_radio_page + 1 < pages) {
+                self->_radio_page++;
+                self->refresh_radio_ui();
+            }
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_rad_sd = make_radio_footer_btn(162, 72, "SD");
+    lv_obj_add_event_cb(
+        btn_rad_sd,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            self->open_list();
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_rad_web = make_radio_footer_btn(239, 73, "WEB/QR", COL_ACCENT_DK);
+    lv_obj_add_event_cb(
+        btn_rad_web,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            self->open_web_qr();
+        },
+        LV_EVENT_CLICKED, this);
+
+    /* =========================== 6. WEB / QR VIEW ========================== */
+    _web_cont = lv_obj_create(_root_screen);
+    lv_obj_set_size(_web_cont, W, H);
+    lv_obj_set_pos(_web_cont, 0, 0);
+    style_flat_box(_web_cont, COL_BG, 0);
+    lv_obj_add_flag(_web_cont, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* lbl_web_hdr = lv_label_create(_web_cont);
+    lv_obj_set_pos(lbl_web_hdr, 10, 6);
+    lv_obj_set_size(lbl_web_hdr, 240, 22);
+    lv_obj_set_style_text_font(lbl_web_hdr, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl_web_hdr, lv_color_hex(COL_TEXT), 0);
+    lv_label_set_text(lbl_web_hdr, "< WEB REMOTE & UPLOAD");
+    lv_obj_add_flag(lbl_web_hdr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        lbl_web_hdr,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            self->switch_mode(ScreenMode::Main);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _web_qr_box = lv_obj_create(_web_cont);
+    lv_obj_set_pos(_web_qr_box, 12, 36);
+    lv_obj_set_size(_web_qr_box, 136, 136);
+    style_flat_box(_web_qr_box, COL_WHITE, 8);
+    lv_obj_add_flag(_web_qr_box, LV_OBJ_FLAG_HIDDEN);
+
+    _web_qr = lv_qrcode_create(_web_qr_box);
+    lv_qrcode_set_size(_web_qr, 124);
+    lv_qrcode_set_dark_color(_web_qr, lv_color_hex(0x000000));
+    lv_qrcode_set_light_color(_web_qr, lv_color_hex(0xFFFFFF));
+    lv_obj_center(_web_qr);
+
+    _lbl_web_status = lv_label_create(_web_cont);
+    lv_obj_set_pos(_lbl_web_status, 158, 38);
+    lv_obj_set_width(_lbl_web_status, 154);
+    lv_label_set_long_mode(_lbl_web_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(_lbl_web_status, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lbl_web_status, lv_color_hex(COL_YELLOW), 0);
+    lv_label_set_text(_lbl_web_status, "Starting Wi-Fi...");
+
+    _lbl_web_url = lv_label_create(_web_cont);
+    lv_obj_set_pos(_lbl_web_url, 158, 66);
+    lv_obj_set_width(_lbl_web_url, 154);
+    lv_label_set_long_mode(_lbl_web_url, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(_lbl_web_url, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_web_url, lv_color_hex(COL_WHITE), 0);
+    lv_label_set_text(_lbl_web_url, "");
+
+    _lbl_web_hint = lv_label_create(_web_cont);
+    lv_obj_set_pos(_lbl_web_hint, 158, 96);
+    lv_obj_set_width(_lbl_web_hint, 154);
+    lv_label_set_long_mode(_lbl_web_hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(_lbl_web_hint, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_web_hint, lv_color_hex(COL_DIM), 0);
+    lv_label_set_text(_lbl_web_hint, "Scan QR on same Wi-Fi to browse, play radio, or upload MP3s.");
+
+    lv_obj_t* btn_web_back = lv_button_create(_web_cont);
+    lv_obj_set_pos(btn_web_back, 16, 186);
+    lv_obj_set_size(btn_web_back, 288, 40);
+    style_flat_box(btn_web_back, COL_PLAY_ON, 10);
+    lv_obj_t* lbl_web_back = lv_label_create(btn_web_back);
+    lv_obj_center(lbl_web_back);
+    lv_obj_set_style_text_font(lbl_web_back, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_web_back, lv_color_hex(COL_WHITE), 0);
+    lv_label_set_text(lbl_web_back, "BACK TO PLAYER (KEEP SERVER ON)");
+    lv_obj_add_event_cb(
+        btn_web_back,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+            self->switch_mode(ScreenMode::Main);
+        },
+        LV_EVENT_CLICKED, this);
+
     refresh_battery_ui();
 }
 
@@ -1907,12 +2623,22 @@ void AppMusicPlayer::destroy_ui()
         lv_obj_delete(_head_cont);
         _head_cont = nullptr;
     }
+    if (_radio_cont) {
+        lv_obj_delete(_radio_cont);
+        _radio_cont = nullptr;
+    }
+    if (_web_cont) {
+        lv_obj_delete(_web_cont);
+        _web_cont = nullptr;
+        _web_qr_box = nullptr;
+        _web_qr     = nullptr;
+    }
 }
 
 void AppMusicPlayer::switch_mode(ScreenMode new_mode)
 {
     _mode = new_mode;
-    if (!_main_cont || !_settings_cont || !_list_cont || !_head_cont) {
+    if (!_main_cont || !_settings_cont || !_list_cont || !_head_cont || !_radio_cont || !_web_cont) {
         return;
     }
 
@@ -1920,6 +2646,8 @@ void AppMusicPlayer::switch_mode(ScreenMode new_mode)
     lv_obj_add_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(_list_cont, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(_head_cont, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_radio_cont, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_web_cont, LV_OBJ_FLAG_HIDDEN);
 
     if (_mode == ScreenMode::Main) {
         lv_obj_remove_flag(_main_cont, LV_OBJ_FLAG_HIDDEN);
@@ -1935,7 +2663,30 @@ void AppMusicPlayer::switch_mode(ScreenMode new_mode)
     } else if (_mode == ScreenMode::Head) {
         lv_obj_remove_flag(_head_cont, LV_OBJ_FLAG_HIDDEN);
         refresh_head_ui();
+    } else if (_mode == ScreenMode::Radio) {
+        lv_obj_remove_flag(_radio_cont, LV_OBJ_FLAG_HIDDEN);
+        refresh_radio_ui();
+    } else if (_mode == ScreenMode::WebQr) {
+        lv_obj_remove_flag(_web_cont, LV_OBJ_FLAG_HIDDEN);
+        refresh_web_qr_ui();
     }
+}
+
+void AppMusicPlayer::open_radio()
+{
+    if (_wifi_svc) {
+        _wifi_svc->load_stations(_sd_mounted);
+        _radio_page = _radio_index / PAGE_ROWS;
+    }
+    switch_mode(ScreenMode::Radio);
+}
+
+void AppMusicPlayer::open_web_qr()
+{
+    if (_wifi_svc) {
+        _wifi_svc->request_web_start();
+    }
+    switch_mode(ScreenMode::WebQr);
 }
 
 void AppMusicPlayer::open_list()
@@ -2029,7 +2780,7 @@ void AppMusicPlayer::refresh_settings_ui()
         return;
     }
 
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         const char* nm = _cfg_btns[i].name;
         lv_obj_t* btn  = _cfg_btns[i].btn;
         lv_obj_t* lbl  = _cfg_btns[i].label;
@@ -2058,17 +2809,22 @@ void AppMusicPlayer::refresh_settings_ui()
             txt_col = _robot_move ? COL_WHITE : COL_DIM;
             text    = std::string("MOVE\n") + (_robot_move ? "ON" : "OFF");
         } else if (std::strcmp(nm, "playlist") == 0) {
-            bg_col  = COL_CARD_HI;
+            bg_col  = (!_radio_mode.load()) ? COL_ACCENT_DK : COL_CARD_HI;
             txt_col = COL_WHITE;
-            text    = "PLAYLIST";
+            text    = "SD LIST";
+        } else if (std::strcmp(nm, "radio") == 0) {
+            bg_col  = _radio_mode.load() ? COL_PURPLE : COL_CARD_HI;
+            txt_col = COL_WHITE;
+            text    = "RADIO";
+        } else if (std::strcmp(nm, "web") == 0) {
+            bool web_on = _wifi_svc && _wifi_svc->is_web_running();
+            bg_col      = web_on ? COL_PLAY_ON : COL_CARD_HI;
+            txt_col     = COL_WHITE;
+            text        = web_on ? "WEB\nON" : "WEB/QR";
         } else if (std::strcmp(nm, "head") == 0) {
             bg_col  = COL_CARD_HI;
             txt_col = COL_TEXT;
             text    = "HEAD";
-        } else if (std::strcmp(nm, "menu") == 0) {
-            bg_col  = COL_CARD_HI;
-            txt_col = COL_YELLOW;
-            text    = "EXIT";
         }
 
         lv_obj_set_style_bg_color(btn, lv_color_hex(bg_col), 0);
@@ -2084,37 +2840,75 @@ void AppMusicPlayer::refresh_main_ui(uint32_t now)
         return;
     }
 
-    if (!_tracks.empty()) {
-        lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_TEXT), 0);
-        std::string cur_title(_tracks[_index].title.c_str(), _tracks[_index].title.size());
-        lv_label_set_text(_lbl_title, clip_text(cur_title, 20).c_str());
+    bool is_rad = _radio_mode.load();
+    if (is_rad && _wifi_svc) {
+        auto stations = _wifi_svc->get_stations();
+        std::string sname = (_radio_index >= 0 && _radio_index < static_cast<int>(stations.size()))
+                                ? stations[_radio_index].name
+                                : "Internet Radio";
+        lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_YELLOW), 0);
+        lv_label_set_text(_lbl_title, clip_text(sname, 20).c_str());
 
-        char tnum[32];
-        std::snprintf(tnum, sizeof(tnum), "%d/%d", _index + 1, static_cast<int>(_tracks.size()));
-        lv_label_set_text(_lbl_track_num, tnum);
+        char rnum[32];
+        std::snprintf(rnum, sizeof(rnum), "FM %d/%d", _radio_index + 1, std::max(1, static_cast<int>(stations.size())));
+        lv_label_set_text(_lbl_track_num, rnum);
+
+        lv_label_set_text(_lbl_elapsed, "LIVE");
+        lv_label_set_text(_lbl_duration, "RADIO");
+        lv_obj_set_style_bg_color(_bar_fill, lv_color_hex(COL_PURPLE), 0);
+        lv_obj_set_width(_bar_fill, _playing.load() ? BAR_W : 0);
     } else {
-        lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_RED), 0);
-        lv_label_set_text(_lbl_title, "NO MUSIC");
-        lv_label_set_text(_lbl_track_num, "");
-    }
+        lv_obj_set_style_bg_color(_bar_fill, lv_color_hex(COL_ACCENT), 0);
+        if (!_tracks.empty()) {
+            lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_TEXT), 0);
+            std::string cur_title(_tracks[_index].title.c_str(), _tracks[_index].title.size());
+            lv_label_set_text(_lbl_title, clip_text(cur_title, 20).c_str());
 
-    int32_t el_ms  = _elapsed_ms.load();
-    int32_t dur_ms = _duration_ms.load();
-    lv_label_set_text(_lbl_elapsed, fmt_time(el_ms).c_str());
-    lv_label_set_text(_lbl_duration, fmt_time(dur_ms).c_str());
+            char tnum[32];
+            std::snprintf(tnum, sizeof(tnum), "%d/%d", _index + 1, static_cast<int>(_tracks.size()));
+            lv_label_set_text(_lbl_track_num, tnum);
+        } else {
+            lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_RED), 0);
+            lv_label_set_text(_lbl_title, "NO MUSIC");
+            lv_label_set_text(_lbl_track_num, "");
+        }
 
-    float ratio = 0.0f;
-    if (dur_ms > 0) {
-        ratio = std::clamp(static_cast<float>(el_ms) / static_cast<float>(dur_ms), 0.0f, 1.0f);
+        int32_t el_ms  = _elapsed_ms.load();
+        int32_t dur_ms = _duration_ms.load();
+        lv_label_set_text(_lbl_elapsed, fmt_time(el_ms).c_str());
+        lv_label_set_text(_lbl_duration, fmt_time(dur_ms).c_str());
+
+        float ratio = 0.0f;
+        if (dur_ms > 0) {
+            ratio = std::clamp(static_cast<float>(el_ms) / static_cast<float>(dur_ms), 0.0f, 1.0f);
+        }
+        int fw = static_cast<int>(BAR_W * ratio);
+        lv_obj_set_width(_bar_fill, std::max(0, fw));
     }
-    int fw = static_cast<int>(BAR_W * ratio);
-    lv_obj_set_width(_bar_fill, std::max(0, fw));
 
     std::string vol_line = "VOL " + std::to_string(_volume) + " " + APP_VERSION;
+    if (_wifi_svc && _wifi_svc->is_web_running()) {
+        vol_line += " WEB";
+    }
     lv_label_set_text(_lbl_vol_ver, vol_line.c_str());
 
-    std::string status_line = std::string(_playing.load() ? "PLAYING" : "PAUSED") + "  LOOP " + LOOP_NAMES[_loop_mode];
-    uint32_t status_col     = COL_DIM;
+    std::string status_line;
+    uint32_t status_col = COL_DIM;
+    if (is_rad && _wifi_svc) {
+        if (!_playing.load()) {
+            status_line = "RADIO PAUSED";
+        } else if (_wifi_svc->is_radio_connected()) {
+            size_t kb   = _wifi_svc->radio_buffered_bytes() / 1024;
+            status_line = "LIVE STREAM  BUF " + std::to_string(kb) + "K";
+            status_col  = COL_GREEN;
+        } else {
+            status_line = "BUFFERING RADIO...";
+            status_col  = COL_YELLOW;
+        }
+    } else {
+        status_line = std::string(_playing.load() ? "PLAYING" : "PAUSED") + "  LOOP " + LOOP_NAMES[_loop_mode];
+    }
+
     if (!_status_msg.empty()) {
         status_line = _status_msg;
         status_col  = COL_YELLOW;
@@ -2252,4 +3046,66 @@ void AppMusicPlayer::refresh_head_ui()
     int real_pitch = GetStackChan().motion().getCurrentPitchAngle();
     int real_y_deg = pitch_to_py_y_deg(real_pitch);
     lv_label_set_text(_lbl_head_real, std::to_string(real_y_deg).c_str());
+}
+
+void AppMusicPlayer::refresh_radio_ui()
+{
+    if (!_radio_cont || !_wifi_svc) {
+        return;
+    }
+
+    auto stations = _wifi_svc->get_stations();
+    int count     = static_cast<int>(stations.size());
+    int pages     = std::max(1, (count + PAGE_ROWS - 1) / PAGE_ROWS);
+    _radio_page   = std::clamp(_radio_page, 0, pages - 1);
+
+    char cbuf[48];
+    std::snprintf(cbuf, sizeof(cbuf), "%d STATIONS  %d/%d", count, _radio_page + 1, pages);
+    lv_label_set_text(_lbl_radio_count, cbuf);
+
+    for (int i = 0; i < PAGE_ROWS; ++i) {
+        int s = _radio_page * PAGE_ROWS + i;
+        if (s < count) {
+            lv_obj_remove_flag(_radio_rows[i], LV_OBJ_FLAG_HIDDEN);
+            bool is_cur = (_radio_mode.load() && s == _radio_index);
+            lv_obj_set_style_bg_color(_radio_rows[i], lv_color_hex(is_cur ? COL_PURPLE : COL_CARD), 0);
+            lv_obj_set_style_text_color(_radio_row_lbls[i], lv_color_hex(is_cur ? COL_WHITE : COL_TEXT), 0);
+            lv_label_set_text(_radio_row_lbls[i], clip_text(stations[s].name, 26).c_str());
+        } else {
+            lv_obj_add_flag(_radio_rows[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    std::string info = _wifi_svc->is_wifi_connected()
+                           ? ("Wi-Fi: " + _wifi_svc->get_ip_address() + "  (custom: /sd/radio.txt)")
+                           : "Tap any station to connect Wi-Fi & stream";
+    lv_label_set_text(_lbl_radio_info, clip_text(info, 46).c_str());
+}
+
+void AppMusicPlayer::refresh_web_qr_ui()
+{
+    if (!_web_cont || !_wifi_svc) {
+        return;
+    }
+
+    if (_wifi_svc->is_web_running()) {
+        std::string ip  = _wifi_svc->get_ip_address();
+        std::string url = "http://" + ip + "/";
+
+        lv_obj_set_style_text_color(_lbl_web_status, lv_color_hex(COL_GREEN), 0);
+        lv_label_set_text(_lbl_web_status, "SERVER READY");
+        lv_label_set_text(_lbl_web_url, url.c_str());
+        lv_obj_remove_flag(_web_qr_box, LV_OBJ_FLAG_HIDDEN);
+
+        if (_web_qr && url != _last_qr_url) {
+            lv_qrcode_update(_web_qr, url.c_str(), static_cast<uint32_t>(url.size()));
+            _last_qr_url = url;
+        }
+    } else {
+        lv_obj_add_flag(_web_qr_box, LV_OBJ_FLAG_HIDDEN);
+        std::string st = _wifi_svc->get_wifi_status();
+        lv_obj_set_style_text_color(_lbl_web_status, lv_color_hex(COL_YELLOW), 0);
+        lv_label_set_text(_lbl_web_status, clip_text(st, 22).c_str());
+        lv_label_set_text(_lbl_web_url, "Waiting for Wi-Fi...");
+    }
 }
