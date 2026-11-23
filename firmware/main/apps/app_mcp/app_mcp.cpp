@@ -46,7 +46,7 @@ constexpr int H                      = 240;
 constexpr int Y_HOME_DEG             = 45;
 constexpr uint32_t REC_SAMPLE_RATE   = 16000;
 constexpr size_t REC_MAX_SECONDS     = 30;
-constexpr uint32_t SILENCE_STOP_MS   = 1600;
+constexpr uint32_t SILENCE_STOP_MS   = 950;
 constexpr size_t PREROLL_CHUNKS      = 8;  // 8 * 40 ms = 320 ms pre-roll
 constexpr size_t REC_HEADER_BYTES    = 44;
 constexpr size_t REC_BUF_BYTES       = REC_HEADER_BYTES + REC_SAMPLE_RATE * 2 * REC_MAX_SECONDS;
@@ -416,7 +416,7 @@ void AppMcp::net_task_loop()
                 play_wav_url(url);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(25));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     _net_exited = true;
@@ -433,6 +433,7 @@ void AppMcp::mic_task_loop()
     auto audio_codec = Board::GetInstance().GetAudioCodec();
     std::vector<int16_t> raw_in;
     std::vector<int16_t> mono_16k;
+    float noise_floor = 240.0f;
 
     while (_running.load()) {
         bool manual_req = _rec_start_req.exchange(false);
@@ -442,7 +443,7 @@ void AppMcp::mic_task_loop()
                           static_cast<int32_t>(now_t - _auto_hold_until_ms.load()) >= 0;
 
         if (!manual_req && !auto_ready) {
-            vTaskDelay(pdMS_TO_TICKS(35));
+            vTaskDelay(pdMS_TO_TICKS(15));
             continue;
         }
         if (!audio_codec || !_rec_wav_buf || _rec_wav_cap <= REC_HEADER_BYTES) {
@@ -497,7 +498,6 @@ void AppMcp::mic_task_loop()
         bool speech_heard        = false;
         int speech_streak        = 0;
         int voiced_frames        = 0;
-        float noise_floor        = 220.0f;
         int warmup_frames        = 0;
 
         while (_running.load() && !_rec_stop_req.load() && !_play_pending.load() && !_playing.load()) {
@@ -522,8 +522,8 @@ void AppMcp::mic_task_loop()
             _mic_level.store(std::clamp(rms / 35, 0, 100));
 
             uint32_t now = GetHAL().millis();
-            if (warmup_frames < 6) {
-                noise_floor = noise_floor * 0.78f + rms * 0.22f;
+            if (warmup_frames < 2) {
+                noise_floor = noise_floor * 0.85f + rms * 0.15f;
                 ++warmup_frames;
                 continue;
             }
@@ -580,8 +580,8 @@ void AppMcp::mic_task_loop()
                 ++voiced_frames;
             }
 
-            // Auto-stop after 1.6s of silence following speech
-            if ((now - last_voice_ms) >= SILENCE_STOP_MS && (now - speech_start_ms) >= 800) {
+            // Auto-stop after 0.95s of silence following speech
+            if ((now - last_voice_ms) >= SILENCE_STOP_MS && (now - speech_start_ms) >= 500) {
                 break;
             }
             if ((now - speech_start_ms) >= REC_MAX_SECONDS * 1000) {
@@ -631,6 +631,9 @@ void AppMcp::play_wav_url(const std::string& url)
     _playing         = true;
     _play_started_ms = GetHAL().millis();
     _speak_rms       = 0;
+    if (_face.load() == static_cast<int>(FaceExpr::Thinking)) {
+        _face = static_cast<int>(FaceExpr::Calm);
+    }
     set_status_text("Speaking...");
     GetHAL().showRgbColor(18, 56, 110);
 
@@ -791,7 +794,7 @@ void AppMcp::play_wav_url(const std::string& url)
 
     _speak_rms          = 0;
     _playing            = false;
-    _auto_hold_until_ms = GetHAL().millis() + 650;
+    _auto_hold_until_ms = GetHAL().millis() + 250;
     set_status_text(_rec_ready.load() ? "Sending voice to Antigravity..."
                                       : (_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity"));
     GetHAL().showRgbColor(0, 48, 42);
@@ -923,6 +926,7 @@ bool AppMcp::start_httpd()
         {"/servo/status",    HTTP_GET,  handle_servo_status,    this},
         {"/booth",           HTTP_GET,  handle_booth_get,       this},
         {"/booth",           HTTP_POST, handle_booth_post,      this},
+        {"/listen/resume",   HTTP_POST, handle_listen_resume,   this},
     };
     for (const auto& u : uris) {
         httpd_register_uri_handler(srv, &u);
@@ -986,7 +990,7 @@ int AppMcp::handle_audio_get(httpd_req* req)
 
     size_t sent = 0;
     while (sent < self->_rec_wav_bytes) {
-        size_t chunk = std::min<size_t>(4096, self->_rec_wav_bytes - sent);
+        size_t chunk = std::min<size_t>(16384, self->_rec_wav_bytes - sent);
         if (httpd_resp_send_chunk(req, reinterpret_cast<const char*>(self->_rec_wav_buf + sent),
                                   static_cast<ssize_t>(chunk)) != ESP_OK) {
             break;
@@ -1153,6 +1157,21 @@ int AppMcp::handle_booth_get(httpd_req* req)
 int AppMcp::handle_booth_post(httpd_req* req)
 {
     return handle_booth_get(req);
+}
+
+int AppMcp::handle_listen_resume(httpd_req* req)
+{
+    auto* self                = static_cast<AppMcp*>(req->user_ctx);
+    self->_auto_hold_until_ms = 0;
+    if (self->_face.load() == static_cast<int>(FaceExpr::Thinking)) {
+        self->_face = static_cast<int>(FaceExpr::Calm);
+    }
+    if (!self->_playing.load() && !self->_play_pending.load()) {
+        self->set_status_text(self->_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity");
+        GetHAL().showRgbColor(0, 48, 42);
+    }
+    send_json(req, "{\"success\":true}");
+    return ESP_OK;
 }
 
 /* -------------------------------------------------------------------------- */
