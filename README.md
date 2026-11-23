@@ -14,7 +14,7 @@ This fork adds a native **MicroSD Music Player (`MUSIC`)** app integrated direct
 
 ### Personal Branch Customization (`custom/naruto`)
 
-This branch builds on `feat/music-player` and replaces the default avatar in `AI.AGENT` and `MUSIC` with a custom 7-state Naruto pixel-art sprite set (`Calm`, `Thinking`, `Happy`, `Sleepy`, `Shy`, `Smug`, `Pouty`) cached in PSRAM for smooth voice playback. For a clean, upstream-ready firmware without custom character sprites, switch to `feat/music-player`.
+This branch builds on `feat/music-player` and adds a custom 7-state Naruto pixel-art sprite set (`Calm`, `Thinking`, `Happy`, `Sleepy`, `Shy`, `Smug`, `Pouty`) cached in PSRAM for smooth voice playback, with a live NVS-persisted **Classic / Naruto** avatar toggle in both `SETUP -> Device -> Avatar` and `MUSIC -> Settings` (synced across `AI.AGENT` and `MUSIC`). For a clean, upstream-ready firmware without custom character sprites, switch to `feat/music-player`.
 
 ----
 

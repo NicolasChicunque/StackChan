@@ -12,6 +12,14 @@
 
 namespace stackchan::avatar {
 
+enum class AvatarStyle : uint8_t {
+    Classic = 0,
+    Naruto  = 1,
+};
+
+AvatarStyle getAvatarStyle();
+void setAvatarStyle(AvatarStyle style);
+
 /**
  * @brief
  *
@@ -31,19 +39,21 @@ public:
 
 private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _pannel;
-    lv_obj_t* _naruto_img  = nullptr;
-    bool _naruto_enabled   = false;
-    int _forced_variant    = -1; // -1 = follow Emotion; 0..6 = manual sprite override
-    int _current_sprite    = -1;
-    int _last_ox           = 9999;
-    int _last_oy           = 9999;
-    uint32_t _last_anim_ms = 0;
+    lv_obj_t* _naruto_img      = nullptr;
+    bool _naruto_enabled       = false;
+    AvatarStyle _active_style  = AvatarStyle::Classic;
+    int _forced_variant        = -1; // -1 = follow Emotion; 0..6 = manual sprite override
+    int _current_sprite        = -1;
+    int _last_ox               = 9999;
+    int _last_oy               = 9999;
+    uint32_t _last_anim_ms     = 0;
 
     // 0: Calm, 1: Thinking, 2: Happy, 3: Sleepy, 4: Shy, 5: Smug, 6: Pouty
     lv_image_dsc_t _naruto_sprites[7] = {};
     uint8_t* _naruto_psram_bufs[7]    = {nullptr};
 
     void apply_naruto_sprite(int idx);
+    void sync_avatar_style(bool force = false);
 };
 
 /**

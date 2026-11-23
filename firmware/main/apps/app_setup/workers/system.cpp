@@ -5,6 +5,7 @@
  */
 #include "workers.h"
 #include <stackchan/stackchan.h>
+#include <stackchan/avatar/skins/default/default.h>
 #include <apps/common/toast/toast.h>
 #include <mooncake_log.h>
 #include <assets/assets.h>
@@ -316,4 +317,81 @@ void FactoryResetWorker::update_ui()
         _btn_confirm->label().setText("Confirm");
         _btn_confirm->setBgColor(lv_color_hex(0xFF4444));
     }
+}
+
+AvatarStyleWorker::AvatarStyleWorker()
+{
+    _use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
+
+    _panel = std::make_unique<Container>(lv_screen_active());
+    _panel->setBgColor(lv_color_hex(0xEDF4FF));
+    _panel->align(LV_ALIGN_CENTER, 0, 0);
+    _panel->setBorderWidth(0);
+    _panel->setSize(320, 240);
+    _panel->setRadius(0);
+    _panel->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
+
+    _label_title = std::make_unique<Label>(*_panel);
+    _label_title->setText("Avatar Style");
+    _label_title->setTextFont(&lv_font_montserrat_24);
+    _label_title->setTextColor(lv_color_hex(0x26206A));
+    _label_title->align(LV_ALIGN_CENTER, 0, -82);
+
+    _label_hint = std::make_unique<Label>(*_panel);
+    _label_hint->setText("Applies to AI.Agent & Music");
+    _label_hint->setTextFont(&lv_font_montserrat_14);
+    _label_hint->setTextColor(lv_color_hex(0x5A558F));
+    _label_hint->align(LV_ALIGN_CENTER, 0, -52);
+
+    _btn_classic = std::make_unique<Button>(*_panel);
+    apply_button_common_style(*_btn_classic);
+    _btn_classic->align(LV_ALIGN_CENTER, -72, -2);
+    _btn_classic->setSize(132, 54);
+    _btn_classic->label().setTextFont(&lv_font_montserrat_20);
+    _btn_classic->label().setText("Classic");
+    _btn_classic->onClick().connect([this]() {
+        _use_naruto = false;
+        refresh_buttons();
+    });
+
+    _btn_naruto = std::make_unique<Button>(*_panel);
+    apply_button_common_style(*_btn_naruto);
+    _btn_naruto->align(LV_ALIGN_CENTER, 72, -2);
+    _btn_naruto->setSize(132, 54);
+    _btn_naruto->label().setTextFont(&lv_font_montserrat_20);
+    _btn_naruto->label().setText("Naruto");
+    _btn_naruto->onClick().connect([this]() {
+        _use_naruto = true;
+        refresh_buttons();
+    });
+
+    _btn_confirm = std::make_unique<Button>(*_panel);
+    apply_button_common_style(*_btn_confirm);
+    _btn_confirm->align(LV_ALIGN_CENTER, 0, 68);
+    _btn_confirm->setSize(150, 48);
+    _btn_confirm->label().setTextFont(&lv_font_montserrat_20);
+    _btn_confirm->label().setText("Confirm");
+    _btn_confirm->onClick().connect([this]() {
+        stackchan::avatar::setAvatarStyle(
+            _use_naruto ? stackchan::avatar::AvatarStyle::Naruto : stackchan::avatar::AvatarStyle::Classic);
+        _is_done = true;
+    });
+
+    refresh_buttons();
+}
+
+void AvatarStyleWorker::refresh_buttons()
+{
+    if (_btn_classic) {
+        _btn_classic->setBgColor(lv_color_hex(_use_naruto ? 0xB8D3FD : 0x615B9E));
+        _btn_classic->label().setTextColor(lv_color_hex(_use_naruto ? 0x26206A : 0xFFFFFF));
+    }
+    if (_btn_naruto) {
+        _btn_naruto->setBgColor(lv_color_hex(_use_naruto ? 0x615B9E : 0xB8D3FD));
+        _btn_naruto->label().setTextColor(lv_color_hex(_use_naruto ? 0xFFFFFF : 0x26206A));
+    }
+}
+
+void AvatarStyleWorker::update()
+{
 }

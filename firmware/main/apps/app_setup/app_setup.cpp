@@ -74,6 +74,11 @@ void AppSetup::onOpen()
               [&]() {
                   _destroy_menu = true;
                   _worker       = std::make_unique<TimezoneWorker>();
+              }},
+             {"Avatar",
+              [&]() {
+                  _destroy_menu = true;
+                  _worker       = std::make_unique<AvatarStyleWorker>();
               }}},
         },
         {

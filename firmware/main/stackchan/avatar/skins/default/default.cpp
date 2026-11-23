@@ -7,6 +7,8 @@
 #include <assets/assets.h>
 #include <hal/hal.h>
 #include <esp_heap_caps.h>
+#include <nvs.h>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 
@@ -14,6 +16,10 @@ using namespace uitk::lvgl_cpp;
 using namespace stackchan::avatar;
 
 namespace {
+
+constexpr const char* kAvatarNvsNs  = "avatar_prefs";
+constexpr const char* kAvatarNvsKey = "style";
+std::atomic<int> s_cached_avatar_style{-1};
 
 constexpr const char* kNarutoAssetNames[7] = {
     "naruto_calm.bin",     // 0: Neutral / Calm
@@ -39,6 +45,40 @@ int emotion_to_sprite_idx(const Emotion& emotion)
 }
 
 }  // namespace
+
+AvatarStyle stackchan::avatar::getAvatarStyle()
+{
+    int cached = s_cached_avatar_style.load();
+    if (cached >= 0) {
+        return (cached == static_cast<int>(AvatarStyle::Naruto)) ? AvatarStyle::Naruto : AvatarStyle::Classic;
+    }
+
+    uint8_t val = static_cast<uint8_t>(AvatarStyle::Naruto);
+    nvs_handle_t h{};
+    if (nvs_open(kAvatarNvsNs, NVS_READONLY, &h) == ESP_OK) {
+        uint8_t stored = val;
+        if (nvs_get_u8(h, kAvatarNvsKey, &stored) == ESP_OK && stored <= 1) {
+            val = stored;
+        }
+        nvs_close(h);
+    }
+
+    s_cached_avatar_style.store(static_cast<int>(val));
+    return static_cast<AvatarStyle>(val);
+}
+
+void stackchan::avatar::setAvatarStyle(AvatarStyle style)
+{
+    uint8_t val = (style == AvatarStyle::Naruto) ? 1 : 0;
+    s_cached_avatar_style.store(static_cast<int>(val));
+
+    nvs_handle_t h{};
+    if (nvs_open(kAvatarNvsNs, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, kAvatarNvsKey, val);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
 
 DefaultAvatar::~DefaultAvatar()
 {
@@ -84,21 +124,52 @@ void DefaultAvatar::init(lv_obj_t* parent, const lv_font_t* font)
     _key_elements.mouth    = std::make_unique<DefaultMouth>(_pannel->get(), primaryColor, secondaryColor);
 
     if (_naruto_enabled) {
-        _key_elements.leftEye->setVisible(false);
-        _key_elements.rightEye->setVisible(false);
-        _key_elements.mouth->setVisible(false);
-
         _naruto_img = lv_image_create(_pannel->get());
         lv_obj_align(_naruto_img, LV_ALIGN_CENTER, 0, -10);
         lv_obj_remove_flag(_naruto_img, LV_OBJ_FLAG_CLICKABLE);
         _last_ox = 0;
         _last_oy = -10;
-        apply_naruto_sprite(0);
     }
+
+    sync_avatar_style(true);
 
     // Create SpeechBubble last so it always renders above the avatar
     _key_elements.speechBubble =
         std::make_unique<DefaultSpeechBubble>(_pannel->get(), primaryColor, secondaryColor, font);
+}
+
+void DefaultAvatar::sync_avatar_style(bool force)
+{
+    AvatarStyle desired =
+        (_naruto_enabled && _naruto_img && getAvatarStyle() == AvatarStyle::Naruto)
+            ? AvatarStyle::Naruto
+            : AvatarStyle::Classic;
+
+    if (!force && desired == _active_style) {
+        return;
+    }
+
+    _active_style = desired;
+    if (desired == AvatarStyle::Naruto) {
+        _pannel->setBgColor(lv_color_hex(0x0B0F1A));
+        _key_elements.leftEye->setVisible(false);
+        _key_elements.rightEye->setVisible(false);
+        _key_elements.mouth->setVisible(false);
+        lv_obj_remove_flag(_naruto_img, LV_OBJ_FLAG_HIDDEN);
+        _current_sprite = -1;
+        int idx         = (_forced_variant >= 0 && _forced_variant < 7)
+                              ? _forced_variant
+                              : emotion_to_sprite_idx(_emotion);
+        apply_naruto_sprite(idx);
+    } else {
+        _pannel->setBgColor(secondaryColor);
+        if (_naruto_img) {
+            lv_obj_add_flag(_naruto_img, LV_OBJ_FLAG_HIDDEN);
+        }
+        _key_elements.leftEye->setVisible(true);
+        _key_elements.rightEye->setVisible(true);
+        _key_elements.mouth->setVisible(true);
+    }
 }
 
 void DefaultAvatar::apply_naruto_sprite(int idx)
@@ -118,8 +189,8 @@ void DefaultAvatar::apply_naruto_sprite(int idx)
 void DefaultAvatar::setEmotion(const Emotion& emotion)
 {
     Avatar::setEmotion(emotion);
-    if (_naruto_enabled) {
-        _forced_variant = -1;
+    _forced_variant = -1;
+    if (_active_style == AvatarStyle::Naruto) {
         apply_naruto_sprite(emotion_to_sprite_idx(emotion));
     }
 }
@@ -127,7 +198,7 @@ void DefaultAvatar::setEmotion(const Emotion& emotion)
 void DefaultAvatar::setSpriteVariant(int variant)
 {
     _forced_variant = variant;
-    if (_naruto_enabled) {
+    if (_active_style == AvatarStyle::Naruto) {
         int idx = (variant >= 0 && variant < 7) ? variant : emotion_to_sprite_idx(_emotion);
         apply_naruto_sprite(idx);
     }
@@ -136,8 +207,9 @@ void DefaultAvatar::setSpriteVariant(int variant)
 void DefaultAvatar::update()
 {
     Avatar::update();
+    sync_avatar_style(false);
 
-    if (!_naruto_enabled || !_naruto_img) {
+    if (_active_style != AvatarStyle::Naruto || !_naruto_img) {
         return;
     }
 

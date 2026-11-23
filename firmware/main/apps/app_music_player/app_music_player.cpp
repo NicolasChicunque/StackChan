@@ -14,6 +14,7 @@
 #include <mooncake.h>
 #include <mooncake_log.h>
 #include <stackchan/stackchan.h>
+#include <stackchan/avatar/skins/default/default.h>
 #include <apps/common/common.h>
 #include <assets/assets.h>
 #include <board.h>
@@ -130,17 +131,18 @@ struct CfgBtnSpec {
     int h;
 };
 
-// Settings screen layout:
+// Settings screen layout (4x2 symmetric grid):
 // Row 1: LOOP | SHUFFLE | LIGHTS | MOVE
-// Row 2: PLAYLIST | HEAD | EXIT
-constexpr CfgBtnSpec CFG_BTN_SPECS[7] = {
+// Row 2: PLAYLIST | HEAD | AVATAR | EXIT
+constexpr CfgBtnSpec CFG_BTN_SPECS[8] = {
     {"loop",     8,   48,  73, 56},
     {"shuf",     85,  48,  73, 56},
     {"lights",   162, 48,  73, 56},
     {"move",     239, 48,  73, 56},
-    {"playlist", 8,   116, 98, 52},
-    {"head",     111, 116, 98, 52},
-    {"menu",     214, 116, 98, 52},
+    {"playlist", 8,   116, 73, 56},
+    {"head",     85,  116, 73, 56},
+    {"avatar",   162, 116, 73, 56},
+    {"menu",     239, 116, 73, 56},
 };
 
 uint16_t read_u16_le(const uint8_t* p)
@@ -1138,6 +1140,17 @@ void AppMusicPlayer::toggle_shuffle()
     set_status(std::string("SHUFFLE ") + (_shuffle_on ? "ON" : "OFF"));
 }
 
+void AppMusicPlayer::toggle_avatar_style()
+{
+    bool currently_naruto =
+        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
+    auto next_style =
+        currently_naruto ? stackchan::avatar::AvatarStyle::Classic : stackchan::avatar::AvatarStyle::Naruto;
+    stackchan::avatar::setAvatarStyle(next_style);
+    apply_avatar_style();
+    set_status(next_style == stackchan::avatar::AvatarStyle::Naruto ? "AVATAR NARUTO" : "AVATAR CLASSIC");
+}
+
 int AppMusicPlayer::random_index() const
 {
     int count = static_cast<int>(_tracks.size());
@@ -1437,11 +1450,19 @@ void AppMusicPlayer::build_ui()
     lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_status, lv_color_hex(COL_DIM), 0);
 
-    // Center stage: animated Naruto avatar + floating musical notes
+    // Center stage: animated Naruto or classic StackChan avatar + floating musical notes
     _stage_cont = lv_obj_create(_main_cont);
     lv_obj_set_pos(_stage_cont, STAGE_X, STAGE_Y);
     lv_obj_set_size(_stage_cont, STAGE_W, STAGE_H);
     style_flat_box(_stage_cont, COL_BG, 12);
+
+    auto on_stage_avatar_click = [](lv_event_t* e) {
+        auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
+        self->toggle_play();
+        uint32_t now = GetHAL().millis();
+        self->refresh_main_ui(now);
+        self->refresh_avatar_anim(now);
+    };
 
     _avatar_img = lv_image_create(_stage_cont);
     if (_img_naruto_calm.data != nullptr) {
@@ -1449,16 +1470,36 @@ void AppMusicPlayer::build_ui()
     }
     lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(
-        _avatar_img,
-        [](lv_event_t* e) {
-            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
-            self->toggle_play();
-            uint32_t now = GetHAL().millis();
-            self->refresh_main_ui(now);
-            self->refresh_avatar_anim(now);
-        },
-        LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(_avatar_img, on_stage_avatar_click, LV_EVENT_CLICKED, this);
+
+    _face_card = lv_obj_create(_stage_cont);
+    lv_obj_set_size(_face_card, 136, 96);
+    lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, 0);
+    style_flat_box(_face_card, COL_CARD, 18);
+    lv_obj_set_style_border_width(_face_card, 2, 0);
+    lv_obj_set_style_border_color(_face_card, lv_color_hex(COL_CARD_HI), 0);
+    lv_obj_add_flag(_face_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_face_card, on_stage_avatar_click, LV_EVENT_CLICKED, this);
+
+    _face_eye_l = lv_obj_create(_face_card);
+    lv_obj_set_size(_face_eye_l, 18, 18);
+    lv_obj_align(_face_eye_l, LV_ALIGN_CENTER, -26, -8);
+    style_flat_box(_face_eye_l, COL_WHITE, LV_RADIUS_CIRCLE);
+    lv_obj_remove_flag(_face_eye_l, LV_OBJ_FLAG_CLICKABLE);
+
+    _face_eye_r = lv_obj_create(_face_card);
+    lv_obj_set_size(_face_eye_r, 18, 18);
+    lv_obj_align(_face_eye_r, LV_ALIGN_CENTER, 26, -8);
+    style_flat_box(_face_eye_r, COL_WHITE, LV_RADIUS_CIRCLE);
+    lv_obj_remove_flag(_face_eye_r, LV_OBJ_FLAG_CLICKABLE);
+
+    _face_mouth = lv_obj_create(_face_card);
+    lv_obj_set_size(_face_mouth, 38, 6);
+    lv_obj_align(_face_mouth, LV_ALIGN_CENTER, 0, 18);
+    style_flat_box(_face_mouth, COL_WHITE, 4);
+    lv_obj_remove_flag(_face_mouth, LV_OBJ_FLAG_CLICKABLE);
+
+    apply_avatar_style();
 
     // 4 floating musical notes flanking the avatar
     const int note_xs[4] = {20, 56, 234, 270};
@@ -1552,7 +1593,7 @@ void AppMusicPlayer::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         const auto& spec  = CFG_BTN_SPECS[i];
         _cfg_btns[i].name = spec.name;
 
@@ -1600,6 +1641,8 @@ void AppMusicPlayer::build_ui()
                 } else if (std::strcmp(nm, "head") == 0) {
                     self->switch_mode(ScreenMode::Head);
                     return;
+                } else if (std::strcmp(nm, "avatar") == 0) {
+                    self->toggle_avatar_style();
                 } else if (std::strcmp(nm, "menu") == 0) {
                     self->close();
                     return;
@@ -1877,7 +1920,13 @@ void AppMusicPlayer::destroy_ui()
 {
     if (_main_cont) {
         lv_obj_delete(_main_cont);
-        _main_cont = nullptr;
+        _main_cont   = nullptr;
+        _stage_cont  = nullptr;
+        _avatar_img  = nullptr;
+        _face_card   = nullptr;
+        _face_eye_l  = nullptr;
+        _face_eye_r  = nullptr;
+        _face_mouth  = nullptr;
     }
     if (_settings_cont) {
         lv_obj_delete(_settings_cont);
@@ -2013,7 +2062,9 @@ void AppMusicPlayer::refresh_settings_ui()
         return;
     }
 
-    for (int i = 0; i < 7; ++i) {
+    bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
+
+    for (int i = 0; i < 8; ++i) {
         const char* nm = _cfg_btns[i].name;
         lv_obj_t* btn  = _cfg_btns[i].btn;
         lv_obj_t* lbl  = _cfg_btns[i].label;
@@ -2049,6 +2100,10 @@ void AppMusicPlayer::refresh_settings_ui()
             bg_col  = COL_CARD_HI;
             txt_col = COL_TEXT;
             text    = "HEAD";
+        } else if (std::strcmp(nm, "avatar") == 0) {
+            bg_col  = use_naruto ? COL_ACCENT_DK : COL_CARD_HI;
+            txt_col = use_naruto ? COL_YELLOW : COL_WHITE;
+            text    = std::string("AVATAR\n") + (use_naruto ? "NARUTO" : "CLASSIC");
         } else if (std::strcmp(nm, "menu") == 0) {
             bg_col  = COL_CARD_HI;
             txt_col = COL_YELLOW;
@@ -2112,36 +2167,97 @@ void AppMusicPlayer::refresh_main_ui(uint32_t now)
     refresh_button_styles();
 }
 
+void AppMusicPlayer::apply_avatar_style()
+{
+    bool show_naruto =
+        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
+         _img_naruto_calm.data != nullptr);
+
+    if (_avatar_img) {
+        if (show_naruto) {
+            lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (_face_card) {
+        if (show_naruto) {
+            lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
 void AppMusicPlayer::refresh_avatar_anim(uint32_t now)
 {
-    if (!_avatar_img) {
+    if (!_avatar_img && !_face_card) {
         return;
     }
 
-    bool is_playing = _playing.load();
+    apply_avatar_style();
+    bool is_playing  = _playing.load();
+    bool show_naruto =
+        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
+         _img_naruto_calm.data != nullptr);
 
-    // Switch Naruto expression between Happy (playing) and Calm (paused)
-    if (is_playing != _avatar_showing_happy) {
-        _avatar_showing_happy = is_playing;
-        if (is_playing && _img_naruto_happy.data != nullptr) {
-            lv_image_set_src(_avatar_img, &_img_naruto_happy);
-        } else if (_img_naruto_calm.data != nullptr) {
-            lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        }
-    }
-
-    // Gentle bounce on the beat while playing, calm breathing while paused
     int offset_y = 0;
     int offset_x = 0;
-    if (is_playing) {
-        float beat_phase = static_cast<float>(now % BEAT_MS) / static_cast<float>(BEAT_MS);
-        offset_y         = static_cast<int>(-std::abs(std::sin(beat_phase * 3.14159f)) * 5.0f) + 2;
-        offset_x         = static_cast<int>(std::sin((now / static_cast<float>(BEAT_MS)) * 1.5708f) * 3.0f);
-    } else {
-        float breath = std::sin(static_cast<float>(now % 3000) / 3000.0f * 6.28318f);
-        offset_y     = static_cast<int>(breath * 2.0f);
+
+    if (show_naruto && _avatar_img) {
+        // Switch Naruto expression between Happy (playing) and Calm (paused)
+        if (is_playing != _avatar_showing_happy) {
+            _avatar_showing_happy = is_playing;
+            if (is_playing && _img_naruto_happy.data != nullptr) {
+                lv_image_set_src(_avatar_img, &_img_naruto_happy);
+            } else if (_img_naruto_calm.data != nullptr) {
+                lv_image_set_src(_avatar_img, &_img_naruto_calm);
+            }
+        }
+
+        // Gentle bounce on the beat while playing, calm breathing while paused
+        if (is_playing) {
+            float beat_phase = static_cast<float>(now % BEAT_MS) / static_cast<float>(BEAT_MS);
+            offset_y         = static_cast<int>(-std::abs(std::sin(beat_phase * 3.14159f)) * 5.0f) + 2;
+            offset_x         = static_cast<int>(std::sin((now / static_cast<float>(BEAT_MS)) * 1.5708f) * 3.0f);
+        } else {
+            float breath = std::sin(static_cast<float>(now % 3000) / 3000.0f * 6.28318f);
+            offset_y     = static_cast<int>(breath * 2.0f);
+        }
+        lv_obj_align(_avatar_img, LV_ALIGN_CENTER, offset_x, offset_y);
+    } else if (_face_card) {
+        // Animate the classic StackChan face on the beat
+        int mouth_h = 6;
+        int mouth_w = 38;
+        if (is_playing) {
+            float beat_phase = static_cast<float>(now % BEAT_MS) / static_cast<float>(BEAT_MS);
+            float pulse      = std::abs(std::sin(beat_phase * 3.14159f));
+            offset_y         = static_cast<int>(-pulse * 5.0f) + 2;
+            offset_x         = static_cast<int>(std::sin((now / static_cast<float>(BEAT_MS)) * 1.5708f) * 3.0f);
+            mouth_h          = 10 + static_cast<int>(pulse * 12.0f);
+            mouth_w          = 30 + static_cast<int>(pulse * 12.0f);
+            lv_obj_set_style_border_color(_face_card, lv_color_hex(COL_ACCENT), 0);
+        } else {
+            float breath = std::sin(static_cast<float>(now % 3000) / 3000.0f * 6.28318f);
+            offset_y     = static_cast<int>(breath * 2.0f);
+            lv_obj_set_style_border_color(_face_card, lv_color_hex(COL_CARD_HI), 0);
+        }
+        lv_obj_align(_face_card, LV_ALIGN_CENTER, offset_x, offset_y);
+
+        // Occasional natural blink
+        bool blink = ((now % 3400) > 3250);
+        int eye_h  = blink ? 4 : 18;
+        if (_face_eye_l) {
+            lv_obj_set_size(_face_eye_l, 18, eye_h);
+        }
+        if (_face_eye_r) {
+            lv_obj_set_size(_face_eye_r, 18, eye_h);
+        }
+        if (_face_mouth) {
+            lv_obj_set_size(_face_mouth, mouth_w, mouth_h);
+            lv_obj_set_style_radius(_face_mouth, is_playing ? 10 : 4, 0);
+        }
     }
-    lv_obj_align(_avatar_img, LV_ALIGN_CENTER, offset_x, offset_y);
 
     // Floating musical notes on the sides
     const int base_xs[4] = {18, 54, 232, 268};

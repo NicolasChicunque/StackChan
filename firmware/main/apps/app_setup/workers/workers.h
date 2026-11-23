@@ -466,4 +466,26 @@ private:
     std::unique_ptr<FactoryResetWorker> _worker_reset;
 };
 
+/**
+ * @brief Select between Classic StackChan and Naruto avatar styles.
+ *
+ */
+class AvatarStyleWorker : public WorkerBase {
+public:
+    AvatarStyleWorker();
+    void update() override;
+
+private:
+    void refresh_buttons();
+
+    std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_title;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_hint;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_classic;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_naruto;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_confirm;
+
+    bool _use_naruto = true;
+};
+
 }  // namespace setup_workers

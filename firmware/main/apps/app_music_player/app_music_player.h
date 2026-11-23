@@ -121,6 +121,7 @@ private:
     void toggle_move();
     void toggle_lights();
     void toggle_shuffle();
+    void toggle_avatar_style();
     int random_index() const;
     void track_finished();
 
@@ -147,6 +148,7 @@ private:
     void refresh_button_styles();
     void refresh_settings_ui();
     void refresh_battery_ui();
+    void apply_avatar_style();
     void refresh_avatar_anim(uint32_t now);
     void refresh_list_ui();
     void refresh_head_ui();
@@ -229,9 +231,13 @@ private:
     lv_obj_t* _lbl_vol_ver    = nullptr;
     lv_obj_t* _lbl_status     = nullptr;
 
-    // Center stage: animated Naruto avatar + floating musical notes
+    // Center stage: animated Naruto or classic StackChan avatar + floating musical notes
     lv_obj_t* _stage_cont     = nullptr;
     lv_obj_t* _avatar_img     = nullptr;
+    lv_obj_t* _face_card      = nullptr;
+    lv_obj_t* _face_eye_l     = nullptr;
+    lv_obj_t* _face_eye_r     = nullptr;
+    lv_obj_t* _face_mouth     = nullptr;
     lv_obj_t* _note_lbls[4]   = {nullptr};
 
     struct BtnWidget {
@@ -243,7 +249,7 @@ private:
 
     // 2. Settings view
     lv_obj_t* _settings_cont  = nullptr;
-    BtnWidget _cfg_btns[7];   // loop, shuf, lights, move, playlist, head, menu
+    BtnWidget _cfg_btns[8];   // loop, shuf, lights, move, playlist, head, avatar, menu
 
     // 3. Playlist view
     lv_obj_t* _list_cont        = nullptr;
