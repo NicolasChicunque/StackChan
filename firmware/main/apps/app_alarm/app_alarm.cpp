@@ -150,6 +150,7 @@ void AppAlarm::onOpen()
     _saved_brightness = std::max<uint8_t>(GetHAL().getBackLightBrightness(), 50);
     _head_pet_flag    = false;
     _shake_flag       = false;
+    _sd_scan_req      = false;
     _audio_rms        = 0;
     _ring_alarm_idx   = -1;
 
@@ -216,6 +217,16 @@ void AppAlarm::onOpen()
 void AppAlarm::onRunning()
 {
     uint32_t now = GetHAL().millis();
+
+    // Deferred SD scan outside deep LVGL event callback stack
+    if (_sd_scan_req) {
+        _sd_scan_req = false;
+        stop_audio();
+        scan_sd_mp3s();
+        LvglLockGuard lock;
+        rebuild_sd_rows();
+        open_screen(Screen::SdPicker);
+    }
 
     // Check if background AlarmService fired while AppAlarm is open
     int pending = AlarmService::instance().consumePendingRingIdx();
@@ -514,8 +525,13 @@ void AppAlarm::start_audio(uint8_t tone, const std::string& mp3_path, bool previ
     _audio_running  = true;
     _audio_exited   = false;
 
-    // Internal SRAM stack (safe for SD FATFS + minimp3 + AudioCodec)
-    if (xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 8192, this, 4, nullptr, 1) != pdPASS) {
+    // minimp3 L3_decode uses ~11 KB of stack locals; use 32 KB PSRAM stack (or 20 KB internal SRAM fallback)
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(audio_task_entry, "alarm_aud", 32768, this, 4, nullptr, 1,
+                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (ok != pdPASS) {
+        ok = xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 20480, this, 4, nullptr, 1);
+    }
+    if (ok != pdPASS) {
         _audio_running = false;
         _audio_exited  = true;
     }
@@ -682,20 +698,23 @@ bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
         return false;
     }
 
-    auto* mp3d = new (std::nothrow) mp3dec_t();
+    auto* mp3d = static_cast<mp3dec_t*>(heap_caps_malloc(sizeof(mp3dec_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!mp3d) {
+        mp3d = static_cast<mp3dec_t*>(std::malloc(sizeof(mp3dec_t)));
+    }
     if (!mp3d) {
         return false;
     }
     mp3dec_init(mp3d);
 
-    constexpr size_t MP3_BUF_CAP = 4096;
+    constexpr size_t MP3_BUF_CAP = 16384;
     auto* mp3_buf = static_cast<uint8_t*>(heap_caps_malloc(MP3_BUF_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     auto* pcm_raw = static_cast<int16_t*>(heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 
     if (!mp3_buf || !pcm_raw) {
         if (mp3_buf) heap_caps_free(mp3_buf);
         if (pcm_raw) heap_caps_free(pcm_raw);
-        delete mp3d;
+        heap_caps_free(mp3d);
         return false;
     }
 
@@ -709,14 +728,26 @@ bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
         if (!fp) {
             break;
         }
+
+        // Skip ID3v2 header (e.g. embedded cover art) in one fseek so we never stall or trigger TWDT
+        uint8_t id3_head[10] = {};
+        if (std::fread(id3_head, 1, 10, fp) == 10 && std::memcmp(id3_head, "ID3", 3) == 0) {
+            uint32_t tag_sz = ((id3_head[6] & 0x7F) << 21) | ((id3_head[7] & 0x7F) << 14) |
+                              ((id3_head[8] & 0x7F) << 7) | (id3_head[9] & 0x7F);
+            std::fseek(fp, static_cast<long>(10 + tag_sz), SEEK_SET);
+        } else {
+            std::fseek(fp, 0, SEEK_SET);
+        }
+
         mp3dec_init(mp3d);
-        size_t buffered = 0;
+        size_t buffered   = 0;
+        int sync_skips    = 0;
 
         while (_audio_running.load() && !_audio_abort.load()) {
             if (preview_only && (GetHAL().millis() - start_ms) >= 4000) {
                 break;
             }
-            if (buffered < 2048 && !std::feof(fp)) {
+            if (buffered < 4096 && !std::feof(fp)) {
                 size_t rd = std::fread(mp3_buf + buffered, 1, MP3_BUF_CAP - buffered, fp);
                 buffered += rd;
             }
@@ -739,8 +770,11 @@ bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
                 if (std::feof(fp)) {
                     break;
                 }
-                if (buffered > 0) {
-                    std::memmove(mp3_buf, mp3_buf + 1, --buffered);
+                size_t drop = std::min<size_t>(buffered, 256);
+                std::memmove(mp3_buf, mp3_buf + drop, buffered - drop);
+                buffered -= drop;
+                if (++sync_skips % 16 == 0) {
+                    vTaskDelay(pdMS_TO_TICKS(2));
                 }
                 continue;
             }
@@ -771,7 +805,7 @@ bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
 
     heap_caps_free(mp3_buf);
     heap_caps_free(pcm_raw);
-    delete mp3d;
+    heap_caps_free(mp3d);
     return played_any;
 }
 
@@ -1263,11 +1297,8 @@ void AppAlarm::build_ui()
     lv_obj_add_event_cb(
         _btn_edit_mp3,
         [](lv_event_t* e) {
-            auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-            self->stop_audio();
-            self->scan_sd_mp3s();
-            self->rebuild_sd_rows();
-            self->open_screen(Screen::SdPicker);
+            auto* self         = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            self->_sd_scan_req = true;
         },
         LV_EVENT_CLICKED, this);
 

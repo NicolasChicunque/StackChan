@@ -134,6 +134,7 @@ private:
     // SD card
     void* _sd_card_handle      = nullptr;
     bool _sd_mounted           = false;
+    bool _sd_scan_req          = false;
     std::vector<std::string> _sd_mp3_paths;
 
     // NTP background sync
