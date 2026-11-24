@@ -33,7 +33,20 @@ Update of this repo could be a little late than the released firmware and mobile
 
 The **robot body**, connected to the main unit, includes a USB-C interface for power and data, a 550 mAh battery, two feedback servos (360-degree continuous rotation on the horizontal axis and 90-degree movement on the vertical axis), two rows totaling 12 RGB LEDs, infrared transmitter and receiver, a three-zone touch panel, and a full-featured NFC module. 
 
-The **factory firmware** is feature-rich, including an AI Agent, lively and expressive animations, ESP-NOW wireless remote control, and online app downloads. It can connect to a mobile app for video viewing, remote avatar control, and more, and also supports online updates (OTA). The product also supports programming via Arduino, UiFlow2, and other methods, and can connect to various expansion units in the M5Stack ecosystem, making it easy to implement a wide range of custom functions. 
+The **factory firmware** is feature-rich, including an AI Agent, lively and expressive animations, ESP-NOW wireless remote control, and online app downloads. It can connect to a mobile app for video viewing, remote avatar control, and more, and also supports online updates (OTA). The product also supports programming via Arduino, UiFlow2, and other methods, and can connect to various expansion units in the M5Stack ecosystem, making it easy to implement a wide range of custom functions.
+
+### Alarm Clock App (`AppAlarm`)
+
+This branch adds a native **ALARM** launcher app (`firmware/main/apps/app_alarm/`) inspired by Google Clock:
+
+- **Clock face** backed by the onboard PCF8563 RTC, timezone from **SETUP**, and one-tap NTP sync
+- **Up to 6 alarms** with hour/minute, weekday schedule (or one-shot), label, and ringtone, persisted in NVS
+- **4 synthesized ringtones** (Chime, Classic, Radar, Energetic) plus **MP3 files from the microSD card**, with a progressive volume ramp
+- **Background triggering**: a lightweight `AlarmService` task keeps watching the clock while other apps run; it opens ALARM directly from the launcher, or performs a clean warm reboot straight into the ringing screen when another app owns the audio codec
+- **Snooze / Stop** with large on-screen buttons, **head pet to snooze**, and **shake to stop**
+- **NIGHT** nightstand mode dims the backlight until touched or until an alarm rings
+
+> The device must stay powered on (USB-C or battery) for alarms to ring; a fully powered-off StackChan cannot wake itself. 
 
 ### Gemini Live Voice Assistant (`GEMINI`)
 

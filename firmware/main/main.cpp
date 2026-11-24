@@ -31,7 +31,7 @@ extern "C" void app_main(void)
 
     if (!skip_mooncake) {
         // Install apps
-        GetMooncake().installApp(std::make_unique<AppLauncher>());
+        const int launcher_app_id = GetMooncake().installApp(std::make_unique<AppLauncher>());
         hal_toggles::register_app_id(hal_toggles::App::AiAgent,
                                      GetMooncake().installApp(std::make_unique<AppAiAgent>()));
         hal_toggles::register_app_id(hal_toggles::App::Avatar, GetMooncake().installApp(std::make_unique<AppAvatar>()));
@@ -46,6 +46,24 @@ extern "C" void app_main(void)
         hal_toggles::register_app_id(hal_toggles::App::Gemini, GetMooncake().installApp(std::make_unique<AppGemini>()));
         GetMooncake().installApp(std::make_unique<AppMcp>());
         GetMooncake().installApp(std::make_unique<AppSetup>());
+        const int alarm_app_id = GetMooncake().installApp(std::make_unique<AppAlarm>());
+
+        // Start background alarm scheduler (index in launcher list, excluding the launcher itself)
+        {
+            int alarm_page_index = 0;
+            int idx              = 0;
+            for (const auto& props : GetMooncake().getAllAppProps()) {
+                if (props.appID == launcher_app_id) {
+                    continue;
+                }
+                if (props.appID == alarm_app_id) {
+                    alarm_page_index = idx;
+                    break;
+                }
+                ++idx;
+            }
+            AlarmService::instance().start(alarm_page_index, alarm_app_id);
+        }
 
         // Main loop
         while (1) {
