@@ -521,17 +521,36 @@ void AppAlarm::start_audio(uint8_t tone, const std::string& mp3_path, bool previ
     _audio_tone     = tone;
     _audio_mp3_path = mp3_path;
     _audio_preview  = preview_only;
-    _audio_abort    = false;
-    _audio_running  = true;
-    _audio_exited   = false;
 
-    // minimp3 L3_decode uses ~11 KB of stack locals; use 32 KB PSRAM stack (or 20 KB internal SRAM fallback)
-    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(audio_task_entry, "alarm_aud", 32768, this, 4, nullptr, 1,
-                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (ok != pdPASS) {
-        ok = xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 20480, this, 4, nullptr, 1);
+    // Prepare SD mount & speaker volume on main internal-SRAM task (NVS/SPI flash safe)
+    if (tone == AlarmService::TONE_SD) {
+        if (mount_sd() && _audio_mp3_path.empty()) {
+            if (_sd_mp3_paths.empty()) {
+                scan_sd_mp3s();
+            }
+            if (!_sd_mp3_paths.empty()) {
+                _audio_mp3_path = _sd_mp3_paths[0];
+            }
+        }
     }
-    if (ok != pdPASS) {
+    if (auto codec = Board::GetInstance().GetAudioCodec()) {
+        if (codec->input_enabled()) {
+            codec->EnableInput(false);
+        }
+        if (!codec->output_enabled()) {
+            codec->EnableOutput(true);
+        }
+    }
+    int init_vol = preview_only ? std::clamp(_target_vol.load(), 35, 100) : 35;
+    GetHAL().setSpeakerVolume(static_cast<uint8_t>(init_vol), false);
+
+    _audio_abort   = false;
+    _audio_running = true;
+    _audio_exited  = false;
+
+    // Must use INTERNAL SRAM stack (20 KB) so NVS/SPI flash cache assertions never fire
+    // and minimp3 L3_decode (~11 KB stack frame) has ample headroom.
+    if (xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 20480, this, 4, nullptr, 1) != pdPASS) {
         _audio_running = false;
         _audio_exited  = true;
     }
@@ -564,15 +583,6 @@ void AppAlarm::audio_task_loop()
         _audio_exited  = true;
         return;
     }
-
-    if (codec->input_enabled()) {
-        codec->EnableInput(false);
-    }
-    if (!codec->output_enabled()) {
-        codec->EnableOutput(true);
-    }
-    int init_vol = _audio_preview ? std::clamp(_target_vol.load(), 35, 100) : 35;
-    GetHAL().setSpeakerVolume(static_cast<uint8_t>(init_vol), false);
 
     if (_audio_tone == AlarmService::TONE_SD) {
         if (!play_sd_mp3_loop(_audio_mp3_path, _audio_preview) && !_audio_abort.load()) {
