@@ -29,8 +29,9 @@ struct AlarmItem {
  */
 class AlarmService {
 public:
-    static constexpr size_t MAX_ALARMS = 6;
-    static constexpr uint8_t TONE_SD   = 4;
+    static constexpr size_t MAX_ALARMS  = 6;
+    static constexpr uint8_t TONE_SD    = 4;
+    static constexpr int RING_IDX_TIMER = 99;
 
     static AlarmService& instance();
 
@@ -49,6 +50,14 @@ public:
     void clearSnooze();
     int64_t getSnoozeUntil() const;
     int getSnoozeAlarmIdx() const;
+
+    // Background countdown timer (persists across app switches)
+    void startTimer(uint32_t duration_sec);
+    void pauseTimer();
+    void resetTimer(uint32_t preset_sec = 300);
+    bool isTimerRunning() const;
+    uint32_t getTimerRemainingSec() const;
+    uint32_t getTimerPresetSec() const;
 
     void setAppOpen(bool open);
     void setLauncherActive(bool active);
@@ -72,6 +81,7 @@ private:
     void load_from_nvs_locked();
     void save_to_nvs_locked();
     void save_snooze_locked();
+    void save_timer_locked();
     void save_boot_ring_nvs(int alarm_idx);
     int consume_boot_ring_nvs();
 
@@ -85,6 +95,13 @@ private:
     int64_t _snooze_until   = 0;
     int _snooze_alarm_idx   = -1;
     int64_t _last_fire_min  = -1;
+
+    // Background timer state (NVS epoch + monotonic fallback)
+    bool _timer_running          = false;
+    uint32_t _timer_preset_sec   = 300;
+    uint32_t _timer_rem_sec      = 300;
+    int64_t _timer_end_epoch     = 0;
+    uint32_t _timer_target_ms    = 0;
 
     std::atomic<bool> _started{false};
     std::atomic<bool> _app_open{false};

@@ -252,6 +252,9 @@ void AppAlarm::onRunning()
         if (now - _last_anim_tick >= 90) {
             _last_anim_tick = now;
             refresh_avatar_anim(now);
+            if (_screen == Screen::Timer) {
+                refresh_timer_ui(now);
+            }
         }
         if (now - _last_ui_tick >= 250) {
             _last_ui_tick = now;
@@ -340,7 +343,11 @@ void AppAlarm::begin_ringing(int alarm_idx)
 void AppAlarm::action_snooze()
 {
     stop_audio();
-    AlarmService::instance().scheduleSnooze(_ring_alarm_idx);
+    if (_ring_alarm_idx == AlarmService::RING_IDX_TIMER) {
+        AlarmService::instance().startTimer(60);
+    } else {
+        AlarmService::instance().scheduleSnooze(_ring_alarm_idx);
+    }
     GetHAL().setBackLightBrightness(_saved_brightness, false);
     GetHAL().showRgbColor(0, 28, 48);
     GetStackChan().motion().moveWithSpeed(deg_to_yaw(0), deg_to_pitch(Y_HOME_DEG), 500);
@@ -402,6 +409,7 @@ void AppAlarm::open_screen(Screen scr)
     set_vis(_scr_list, scr == Screen::List);
     set_vis(_scr_edit, scr == Screen::Edit);
     set_vis(_scr_sd, scr == Screen::SdPicker);
+    set_vis(_scr_timer, scr == Screen::Timer);
     set_vis(_scr_settings, scr == Screen::Settings);
     set_vis(_scr_ring, scr == Screen::Ringing);
 
@@ -410,6 +418,8 @@ void AppAlarm::open_screen(Screen scr)
         rebuild_list_rows();
     } else if (scr == Screen::Edit) {
         refresh_editor_ui();
+    } else if (scr == Screen::Timer) {
+        refresh_timer_ui(GetHAL().millis());
     } else if (scr == Screen::Settings) {
         refresh_settings_ui();
     } else if (scr == Screen::Clock) {
@@ -1038,8 +1048,8 @@ void AppAlarm::build_ui()
     lv_obj_set_style_text_color(_lbl_next, lv_color_hex(COL_AMBER), 0);
     lv_label_set_text(_lbl_next, "No active alarms");
 
-    // Bottom 4-button bar: ALARMS | NIGHT | SET | EXIT
-    lv_obj_t* btn_alarms = make_btn(_scr_clock, 8, 186, 118, 44, LV_SYMBOL_BELL " ALARMS", COL_TEAL_DK, COL_WHITE);
+    // Bottom 5-button bar: ALARMS | TIMER | NIGHT | SET | EXIT
+    lv_obj_t* btn_alarms = make_btn(_scr_clock, 8, 186, 82, 44, LV_SYMBOL_BELL " ALARMS", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         btn_alarms,
         [](lv_event_t* e) {
@@ -1047,7 +1057,15 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_night = make_btn(_scr_clock, 130, 186, 66, 44, "NIGHT", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_timer = make_btn(_scr_clock, 94, 186, 62, 44, "TIMER", COL_CARD, COL_AMBER);
+    lv_obj_add_event_cb(
+        btn_timer,
+        [](lv_event_t* e) {
+            static_cast<AppAlarm*>(lv_event_get_user_data(e))->open_screen(Screen::Timer);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _btn_night = make_btn(_scr_clock, 160, 186, 52, 44, "NIGHT", COL_CARD, COL_TEXT);
     _lbl_night = lv_obj_get_child(_btn_night, 0);
     lv_obj_add_event_cb(
         _btn_night,
@@ -1056,7 +1074,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_set = make_btn(_scr_clock, 200, 186, 60, 44, LV_SYMBOL_SETTINGS " SET", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_set = make_btn(_scr_clock, 216, 186, 48, 44, "SET", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_set,
         [](lv_event_t* e) {
@@ -1064,7 +1082,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_exit = make_btn(_scr_clock, 264, 186, 48, 44, "EXIT", COL_CARD_HI, COL_YELLOW);
+    lv_obj_t* btn_exit = make_btn(_scr_clock, 268, 186, 44, 44, "EXIT", COL_CARD_HI, COL_YELLOW);
     lv_obj_add_event_cb(
         btn_exit,
         [](lv_event_t* e) {
@@ -1292,6 +1310,188 @@ void AppAlarm::build_ui()
     lv_obj_set_flex_flow(_sd_list_box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(_sd_list_box, LV_DIR_VER);
 
+    /* =================== 4B. TIMER & STOPWATCH SCREEN ================= */
+    _scr_timer = lv_obj_create(_root);
+    lv_obj_set_size(_scr_timer, W, H);
+    lv_obj_set_pos(_scr_timer, 0, 0);
+    style_box(_scr_timer, COL_BG, 0);
+    lv_obj_add_flag(_scr_timer, LV_OBJ_FLAG_HIDDEN);
+
+    _btn_tab_tmr = make_btn(_scr_timer, 8, 5, 108, 30, "TIMER", COL_TEAL_DK, COL_WHITE);
+    lv_obj_add_event_cb(
+        _btn_tab_tmr,
+        [](lv_event_t* e) {
+            auto* self       = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            self->_chrono_tab = false;
+            self->refresh_timer_ui(GetHAL().millis());
+        },
+        LV_EVENT_CLICKED, this);
+
+    _btn_tab_sw = make_btn(_scr_timer, 122, 5, 114, 30, "STOPWATCH", COL_CARD, COL_TEXT);
+    lv_obj_add_event_cb(
+        _btn_tab_sw,
+        [](lv_event_t* e) {
+            auto* self       = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            self->_chrono_tab = true;
+            self->refresh_timer_ui(GetHAL().millis());
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_tmr_back = make_btn(_scr_timer, 242, 5, 70, 30, LV_SYMBOL_LEFT " BACK", COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_tmr_back,
+        [](lv_event_t* e) {
+            static_cast<AppAlarm*>(lv_event_get_user_data(e))->open_screen(Screen::Clock);
+        },
+        LV_EVENT_CLICKED, this);
+
+    // Countdown Timer pane
+    _box_timer = lv_obj_create(_scr_timer);
+    lv_obj_set_pos(_box_timer, 0, 40);
+    lv_obj_set_size(_box_timer, W, 200);
+    style_box(_box_timer, COL_BG, 0);
+
+    lv_obj_t* tmr_card = lv_obj_create(_box_timer);
+    lv_obj_set_pos(tmr_card, 8, 2);
+    lv_obj_set_size(tmr_card, 304, 88);
+    style_box(tmr_card, COL_CARD, 12);
+
+    _lbl_tmr_time = lv_label_create(tmr_card);
+    lv_obj_align(_lbl_tmr_time, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_set_style_text_font(_lbl_tmr_time, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(_lbl_tmr_time, lv_color_hex(COL_WHITE), 0);
+    lv_label_set_text(_lbl_tmr_time, "05:00");
+
+    _lbl_tmr_state = lv_label_create(tmr_card);
+    lv_obj_align(_lbl_tmr_state, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_style_text_font(_lbl_tmr_state, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_tmr_state, lv_color_hex(COL_AMBER), 0);
+    lv_label_set_text(_lbl_tmr_state, "Ready (runs in background)");
+
+    auto make_tmr_adj = [&](int x, const char* txt, int delta_sec) {
+        lv_obj_t* b = make_btn(_box_timer, x, 98, 71, 38, txt, COL_CARD_HI, COL_WHITE);
+        lv_obj_set_user_data(b, reinterpret_cast<void*>(static_cast<intptr_t>(delta_sec)));
+        lv_obj_add_event_cb(
+            b,
+            [](lv_event_t* e) {
+                auto* self       = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+                lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+                int dsec         = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(target)));
+                auto& svc        = AlarmService::instance();
+                int cur          = static_cast<int>(svc.getTimerRemainingSec());
+                int next         = std::clamp(cur + dsec, 10, 7200);
+                if (svc.isTimerRunning()) {
+                    svc.startTimer(static_cast<uint32_t>(next));
+                } else {
+                    svc.resetTimer(static_cast<uint32_t>(next));
+                }
+                self->refresh_timer_ui(GetHAL().millis());
+            },
+            LV_EVENT_CLICKED, this);
+    };
+    make_tmr_adj(8, "-1m", -60);
+    make_tmr_adj(85, "+1m", +60);
+    make_tmr_adj(162, "+5m", +300);
+    make_tmr_adj(240, "+10m", +600);
+
+    _btn_tmr_toggle = make_btn(_box_timer, 8, 144, 194, 46, LV_SYMBOL_PLAY " START", COL_GREEN, COL_BG);
+    _lbl_tmr_toggle = lv_obj_get_child(_btn_tmr_toggle, 0);
+    lv_obj_add_event_cb(
+        _btn_tmr_toggle,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            auto& svc  = AlarmService::instance();
+            if (svc.isTimerRunning()) {
+                svc.pauseTimer();
+            } else {
+                uint32_t rem = svc.getTimerRemainingSec();
+                svc.startTimer(rem > 0 ? rem : svc.getTimerPresetSec());
+            }
+            self->refresh_timer_ui(GetHAL().millis());
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_tmr_rst = make_btn(_box_timer, 210, 144, 102, 46, "RESET", COL_CARD, COL_TEXT);
+    lv_obj_add_event_cb(
+        btn_tmr_rst,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            auto& svc  = AlarmService::instance();
+            svc.resetTimer(svc.getTimerPresetSec());
+            self->refresh_timer_ui(GetHAL().millis());
+        },
+        LV_EVENT_CLICKED, this);
+
+    // Stopwatch pane
+    _box_sw = lv_obj_create(_scr_timer);
+    lv_obj_set_pos(_box_sw, 0, 40);
+    lv_obj_set_size(_box_sw, W, 200);
+    style_box(_box_sw, COL_BG, 0);
+    lv_obj_add_flag(_box_sw, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* sw_card = lv_obj_create(_box_sw);
+    lv_obj_set_pos(sw_card, 8, 2);
+    lv_obj_set_size(sw_card, 304, 134);
+    style_box(sw_card, COL_CARD, 12);
+
+    _lbl_sw_time = lv_label_create(sw_card);
+    lv_obj_align(_lbl_sw_time, LV_ALIGN_CENTER, 0, -16);
+    lv_obj_set_style_text_font(_lbl_sw_time, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(_lbl_sw_time, lv_color_hex(COL_WHITE), 0);
+    lv_label_set_text(_lbl_sw_time, "00:00.0");
+
+    _lbl_sw_lap = lv_label_create(sw_card);
+    lv_obj_align(_lbl_sw_lap, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_set_style_text_font(_lbl_sw_lap, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_sw_lap, lv_color_hex(COL_TEAL), 0);
+    lv_label_set_text(_lbl_sw_lap, "Tap LAP to record split");
+
+    _btn_sw_toggle = make_btn(_box_sw, 8, 144, 134, 46, LV_SYMBOL_PLAY " START", COL_GREEN, COL_BG);
+    _lbl_sw_toggle = lv_obj_get_child(_btn_sw_toggle, 0);
+    lv_obj_add_event_cb(
+        _btn_sw_toggle,
+        [](lv_event_t* e) {
+            auto* self  = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            uint32_t ms = GetHAL().millis();
+            if (self->_sw_running) {
+                self->_sw_accum_ms += (ms - self->_sw_start_ms);
+                self->_sw_running = false;
+            } else {
+                self->_sw_start_ms = ms;
+                self->_sw_running  = true;
+            }
+            self->refresh_timer_ui(ms);
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_sw_lap = make_btn(_box_sw, 148, 144, 80, 46, "LAP", COL_BLUE, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_sw_lap,
+        [](lv_event_t* e) {
+            auto* self     = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            uint32_t ms    = GetHAL().millis();
+            uint32_t total = self->_sw_accum_ms + (self->_sw_running ? (ms - self->_sw_start_ms) : 0);
+            if (total > 0) {
+                self->_sw_last_lap_ms = total;
+                ++self->_sw_lap_count;
+                self->refresh_timer_ui(ms);
+            }
+        },
+        LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_sw_rst = make_btn(_box_sw, 234, 144, 78, 46, "RESET", COL_CARD, COL_TEXT);
+    lv_obj_add_event_cb(
+        btn_sw_rst,
+        [](lv_event_t* e) {
+            auto* self            = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            self->_sw_running     = false;
+            self->_sw_accum_ms    = 0;
+            self->_sw_last_lap_ms = 0;
+            self->_sw_lap_count    = 0;
+            self->refresh_timer_ui(GetHAL().millis());
+        },
+        LV_EVENT_CLICKED, this);
+
     /* ======================== 5. SETTINGS SCREEN ===================== */
     _scr_settings = lv_obj_create(_root);
     lv_obj_set_size(_scr_settings, W, H);
@@ -1494,6 +1694,7 @@ void AppAlarm::destroy_ui()
         _scr_list       = nullptr;
         _scr_edit       = nullptr;
         _scr_sd         = nullptr;
+        _scr_timer      = nullptr;
         _scr_settings   = nullptr;
         _scr_ring       = nullptr;
         _face_card      = nullptr;
@@ -1719,6 +1920,65 @@ void AppAlarm::refresh_editor_ui()
     }
 }
 
+void AppAlarm::refresh_timer_ui(uint32_t now_ms)
+{
+    if (!_scr_timer) return;
+
+    if (_btn_tab_tmr && _btn_tab_sw) {
+        lv_obj_set_style_bg_color(_btn_tab_tmr, lv_color_hex(!_chrono_tab ? COL_TEAL_DK : COL_CARD), 0);
+        lv_obj_set_style_bg_color(_btn_tab_sw, lv_color_hex(_chrono_tab ? COL_TEAL_DK : COL_CARD), 0);
+    }
+
+    if (!_chrono_tab) {
+        if (_box_timer) lv_obj_remove_flag(_box_timer, LV_OBJ_FLAG_HIDDEN);
+        if (_box_sw) lv_obj_add_flag(_box_sw, LV_OBJ_FLAG_HIDDEN);
+
+        auto& svc    = AlarmService::instance();
+        bool running = svc.isTimerRunning();
+        uint32_t rem = svc.getTimerRemainingSec();
+        char tbuf[24];
+        std::snprintf(tbuf, sizeof(tbuf), "%02u:%02u",
+                      static_cast<unsigned>(rem / 60), static_cast<unsigned>(rem % 60));
+        if (_lbl_tmr_time) lv_label_set_text(_lbl_tmr_time, tbuf);
+        if (_lbl_tmr_state) {
+            lv_label_set_text(_lbl_tmr_state, running ? "Running in background..." : "Paused / Ready");
+            lv_obj_set_style_text_color(_lbl_tmr_state, lv_color_hex(running ? COL_GREEN : COL_AMBER), 0);
+        }
+        if (_btn_tmr_toggle && _lbl_tmr_toggle) {
+            lv_obj_set_style_bg_color(_btn_tmr_toggle, lv_color_hex(running ? COL_AMBER : COL_GREEN), 0);
+            lv_label_set_text(_lbl_tmr_toggle, running ? LV_SYMBOL_PAUSE " PAUSE" : LV_SYMBOL_PLAY " START");
+        }
+    } else {
+        if (_box_timer) lv_obj_add_flag(_box_timer, LV_OBJ_FLAG_HIDDEN);
+        if (_box_sw) lv_obj_remove_flag(_box_sw, LV_OBJ_FLAG_HIDDEN);
+
+        uint32_t total_ms = _sw_accum_ms + (_sw_running ? (now_ms - _sw_start_ms) : 0);
+        unsigned mins     = static_cast<unsigned>(total_ms / 60000);
+        unsigned secs     = static_cast<unsigned>((total_ms / 1000) % 60);
+        unsigned tenths   = static_cast<unsigned>((total_ms / 100) % 10);
+        char sbuf[24];
+        std::snprintf(sbuf, sizeof(sbuf), "%02u:%02u.%u", mins, secs, tenths);
+        if (_lbl_sw_time) lv_label_set_text(_lbl_sw_time, sbuf);
+
+        if (_lbl_sw_lap) {
+            if (_sw_lap_count > 0) {
+                unsigned lm = static_cast<unsigned>(_sw_last_lap_ms / 60000);
+                unsigned ls = static_cast<unsigned>((_sw_last_lap_ms / 1000) % 60);
+                unsigned lt = static_cast<unsigned>((_sw_last_lap_ms / 100) % 10);
+                char lbuf[40];
+                std::snprintf(lbuf, sizeof(lbuf), "Lap %d: %02u:%02u.%u", _sw_lap_count, lm, ls, lt);
+                lv_label_set_text(_lbl_sw_lap, lbuf);
+            } else {
+                lv_label_set_text(_lbl_sw_lap, "Tap LAP to record split");
+            }
+        }
+        if (_btn_sw_toggle && _lbl_sw_toggle) {
+            lv_obj_set_style_bg_color(_btn_sw_toggle, lv_color_hex(_sw_running ? COL_AMBER : COL_GREEN), 0);
+            lv_label_set_text(_lbl_sw_toggle, _sw_running ? LV_SYMBOL_PAUSE " PAUSE" : LV_SYMBOL_PLAY " START");
+        }
+    }
+}
+
 void AppAlarm::refresh_settings_ui()
 {
     if (!_scr_settings) return;
@@ -1740,18 +2000,24 @@ void AppAlarm::refresh_settings_ui()
 void AppAlarm::refresh_ringing_ui(uint32_t now_ms)
 {
     if (!_scr_ring) return;
-    time_t now   = std::time(nullptr);
-    struct tm lt = {};
-    localtime_r(&now, &lt);
+    if (_ring_alarm_idx == AlarmService::RING_IDX_TIMER) {
+        lv_label_set_text(_lbl_ring_time, "00:00");
+        lv_label_set_text(_lbl_ring_label, "Timer Finished!");
+        lv_label_set_text(_lbl_ring_snooze, "+1 MIN");
+    } else {
+        time_t now   = std::time(nullptr);
+        struct tm lt = {};
+        localtime_r(&now, &lt);
 
-    char tbuf[16];
-    std::snprintf(tbuf, sizeof(tbuf), "%02d:%02d", lt.tm_hour, lt.tm_min);
-    lv_label_set_text(_lbl_ring_time, tbuf);
-    lv_label_set_text(_lbl_ring_label, AlarmService::labelName(_ring_item.label_idx));
+        char tbuf[16];
+        std::snprintf(tbuf, sizeof(tbuf), "%02d:%02d", lt.tm_hour, lt.tm_min);
+        lv_label_set_text(_lbl_ring_time, tbuf);
+        lv_label_set_text(_lbl_ring_label, AlarmService::labelName(_ring_item.label_idx));
 
-    char sbuf[24];
-    std::snprintf(sbuf, sizeof(sbuf), "SNOOZE %dm", AlarmService::instance().getSnoozeMin());
-    lv_label_set_text(_lbl_ring_snooze, sbuf);
+        char sbuf[24];
+        std::snprintf(sbuf, sizeof(sbuf), "SNOOZE %dm", AlarmService::instance().getSnoozeMin());
+        lv_label_set_text(_lbl_ring_snooze, sbuf);
+    }
 
     bool flash = ((now_ms / 450) % 2) == 0;
     lv_obj_set_style_border_color(_ring_face_card, lv_color_hex(flash ? COL_AMBER : COL_TEAL), 0);

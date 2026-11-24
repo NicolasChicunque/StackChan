@@ -39,6 +39,7 @@ private:
         List,
         Edit,
         SdPicker,
+        Timer,
         Settings,
         Ringing,
     };
@@ -78,6 +79,7 @@ private:
     void rebuild_sd_rows();
     void refresh_clock_ui(uint32_t now_ms);
     void refresh_editor_ui();
+    void refresh_timer_ui(uint32_t now_ms);
     void refresh_settings_ui();
     void refresh_ringing_ui(uint32_t now_ms);
     void refresh_avatar_anim(uint32_t now_ms);
@@ -104,6 +106,14 @@ private:
     // Nightstand dim mode
     bool _night_mode           = false;
     uint8_t _saved_brightness  = 80;
+
+    // Timer & Stopwatch state
+    bool _chrono_tab           = false;  // false = Countdown Timer, true = Stopwatch
+    bool _sw_running           = false;
+    uint32_t _sw_start_ms      = 0;
+    uint32_t _sw_accum_ms      = 0;
+    uint32_t _sw_last_lap_ms   = 0;
+    int _sw_lap_count          = 0;
 
     // Physical gesture signals (Head pet -> Snooze, Shake -> Dismiss)
     int _head_pet_conn         = -1;
@@ -173,6 +183,21 @@ private:
     // SD MP3 picker screen
     lv_obj_t* _scr_sd          = nullptr;
     lv_obj_t* _sd_list_box     = nullptr;
+
+    // Timer & Stopwatch screen
+    lv_obj_t* _scr_timer       = nullptr;
+    lv_obj_t* _btn_tab_tmr     = nullptr;
+    lv_obj_t* _btn_tab_sw      = nullptr;
+    lv_obj_t* _box_timer       = nullptr;
+    lv_obj_t* _lbl_tmr_time    = nullptr;
+    lv_obj_t* _lbl_tmr_state   = nullptr;
+    lv_obj_t* _btn_tmr_toggle  = nullptr;
+    lv_obj_t* _lbl_tmr_toggle  = nullptr;
+    lv_obj_t* _box_sw          = nullptr;
+    lv_obj_t* _lbl_sw_time     = nullptr;
+    lv_obj_t* _lbl_sw_lap      = nullptr;
+    lv_obj_t* _btn_sw_toggle   = nullptr;
+    lv_obj_t* _lbl_sw_toggle   = nullptr;
 
     // Settings / Sync screen
     lv_obj_t* _scr_settings    = nullptr;

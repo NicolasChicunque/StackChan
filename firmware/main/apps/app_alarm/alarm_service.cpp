@@ -27,6 +27,9 @@ constexpr const char* KEY_VOLUME      = "volume";
 constexpr const char* KEY_SNOOZE_AT   = "snooze_at";
 constexpr const char* KEY_SNOOZE_IDX  = "snooze_idx";
 constexpr const char* KEY_BOOT_RING   = "boot_ring";
+constexpr const char* KEY_TIMER_END   = "timer_end";
+constexpr const char* KEY_TIMER_REM   = "timer_rem";
+constexpr const char* KEY_TIMER_PRE   = "timer_pre";
 
 constexpr time_t MIN_VALID_EPOCH      = 1704067200;  // 2024-01-01 00:00:00 UTC
 
@@ -119,6 +122,26 @@ void AlarmService::load_from_nvs_locked()
     std::string snooze_str = s.GetString(KEY_SNOOZE_AT, "0");
     _snooze_until          = std::strtoll(snooze_str.c_str(), nullptr, 10);
 
+    _timer_preset_sec      = static_cast<uint32_t>(std::clamp<int>(s.GetInt(KEY_TIMER_PRE, 300), 10, 7200));
+    _timer_rem_sec         = static_cast<uint32_t>(std::clamp<int>(s.GetInt(KEY_TIMER_REM, static_cast<int>(_timer_preset_sec)), 0, 7200));
+    std::string tend_str   = s.GetString(KEY_TIMER_END, "0");
+    _timer_end_epoch       = std::strtoll(tend_str.c_str(), nullptr, 10);
+    time_t now_t           = std::time(nullptr);
+    if (_timer_end_epoch > 0 && now_t >= MIN_VALID_EPOCH) {
+        if (static_cast<int64_t>(now_t) < _timer_end_epoch) {
+            _timer_running   = true;
+            _timer_rem_sec   = static_cast<uint32_t>(_timer_end_epoch - static_cast<int64_t>(now_t));
+            _timer_target_ms = GetHAL().millis() + _timer_rem_sec * 1000;
+        } else {
+            _timer_running   = true;
+            _timer_rem_sec   = 0;
+            _timer_target_ms = GetHAL().millis();
+        }
+    } else {
+        _timer_running   = false;
+        _timer_end_epoch = 0;
+    }
+
     _alarms.clear();
     std::string raw = s.GetString(KEY_ALARMS_JSON, "");
     if (!raw.empty()) {
@@ -196,6 +219,14 @@ void AlarmService::save_snooze_locked()
     Settings nvs(NVS_NS, true);
     nvs.SetString(KEY_SNOOZE_AT, std::to_string(_snooze_until));
     nvs.SetInt(KEY_SNOOZE_IDX, _snooze_alarm_idx);
+}
+
+void AlarmService::save_timer_locked()
+{
+    Settings nvs(NVS_NS, true);
+    nvs.SetString(KEY_TIMER_END, std::to_string(_timer_end_epoch));
+    nvs.SetInt(KEY_TIMER_REM, static_cast<int>(_timer_rem_sec));
+    nvs.SetInt(KEY_TIMER_PRE, static_cast<int>(_timer_preset_sec));
 }
 
 void AlarmService::save_boot_ring_nvs(int alarm_idx)
@@ -288,6 +319,64 @@ int AlarmService::getSnoozeAlarmIdx() const
     return _snooze_alarm_idx;
 }
 
+void AlarmService::startTimer(uint32_t duration_sec)
+{
+    std::lock_guard<std::mutex> lk(_mtx);
+    uint32_t sec      = std::clamp<uint32_t>(duration_sec, 1, 7200);
+    _timer_rem_sec    = sec;
+    _timer_running    = true;
+    _timer_target_ms  = GetHAL().millis() + sec * 1000;
+    time_t now        = std::time(nullptr);
+    _timer_end_epoch  = (now >= MIN_VALID_EPOCH) ? (static_cast<int64_t>(now) + sec) : 0;
+    save_timer_locked();
+}
+
+void AlarmService::pauseTimer()
+{
+    std::lock_guard<std::mutex> lk(_mtx);
+    if (_timer_running) {
+        uint32_t now_ms = GetHAL().millis();
+        int32_t diff_ms = static_cast<int32_t>(_timer_target_ms - now_ms);
+        _timer_rem_sec  = (diff_ms > 0) ? static_cast<uint32_t>((diff_ms + 999) / 1000) : 0;
+        _timer_running  = false;
+        _timer_end_epoch = 0;
+        save_timer_locked();
+    }
+}
+
+void AlarmService::resetTimer(uint32_t preset_sec)
+{
+    std::lock_guard<std::mutex> lk(_mtx);
+    _timer_preset_sec = std::clamp<uint32_t>(preset_sec, 10, 7200);
+    _timer_rem_sec    = _timer_preset_sec;
+    _timer_running    = false;
+    _timer_end_epoch  = 0;
+    save_timer_locked();
+}
+
+bool AlarmService::isTimerRunning() const
+{
+    std::lock_guard<std::mutex> lk(_mtx);
+    return _timer_running;
+}
+
+uint32_t AlarmService::getTimerRemainingSec() const
+{
+    std::lock_guard<std::mutex> lk(_mtx);
+    if (!_timer_running) {
+        return _timer_rem_sec;
+    }
+    uint32_t now_ms = GetHAL().millis();
+    int32_t diff_ms = static_cast<int32_t>(_timer_target_ms - now_ms);
+    return (diff_ms > 0) ? static_cast<uint32_t>((diff_ms + 999) / 1000) : 0;
+}
+
+uint32_t AlarmService::getTimerPresetSec() const
+{
+    std::lock_guard<std::mutex> lk(_mtx);
+    return _timer_preset_sec;
+}
+
 void AlarmService::setAppOpen(bool open)
 {
     _app_open = open;
@@ -321,6 +410,16 @@ bool AlarmService::hasPendingRing() const
 bool AlarmService::findNextAlarmText(std::string& out_text) const
 {
     std::lock_guard<std::mutex> lk(_mtx);
+    if (_timer_running) {
+        uint32_t now_ms = GetHAL().millis();
+        int32_t diff_ms = static_cast<int32_t>(_timer_target_ms - now_ms);
+        uint32_t rem    = (diff_ms > 0) ? static_cast<uint32_t>((diff_ms + 999) / 1000) : 0;
+        char buf[48];
+        std::snprintf(buf, sizeof(buf), "Timer %02u:%02u",
+                      static_cast<unsigned>(rem / 60), static_cast<unsigned>(rem % 60));
+        out_text = buf;
+        return true;
+    }
     time_t now = std::time(nullptr);
     if (_snooze_until > static_cast<int64_t>(now)) {
         int64_t rem = _snooze_until - static_cast<int64_t>(now);
@@ -406,41 +505,54 @@ void AlarmService::bg_task_loop()
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(500));
 
-        time_t now = std::time(nullptr);
-        if (now < MIN_VALID_EPOCH) {
-            continue;
-        }
+        time_t now      = std::time(nullptr);
+        uint32_t now_ms = GetHAL().millis();
 
         int trigger_idx = -1;
         {
             std::lock_guard<std::mutex> lk(_mtx);
 
-            // 1. Check active snooze deadline
-            if (_snooze_until > 0 && static_cast<int64_t>(now) >= _snooze_until) {
-                trigger_idx       = (_snooze_alarm_idx >= 0) ? _snooze_alarm_idx : 0;
-                _snooze_until     = 0;
-                _snooze_alarm_idx = -1;
-                save_snooze_locked();
-            } else {
-                // 2. Check scheduled alarms once per minute
-                int64_t epoch_min = static_cast<int64_t>(now) / 60;
-                if (epoch_min != _last_fire_min) {
-                    struct tm lt = {};
-                    localtime_r(&now, &lt);
-                    for (size_t i = 0; i < _alarms.size(); ++i) {
-                        auto& a = _alarms[i];
-                        if (!a.enabled) continue;
-                        if (a.hour != lt.tm_hour || a.minute != lt.tm_min) continue;
-                        if (a.days_mask != 0 && ((a.days_mask & (1u << lt.tm_wday)) == 0)) continue;
+            // 0. Check background countdown timer (works even without valid NTP epoch)
+            if (_timer_running) {
+                bool timer_expired = (static_cast<int32_t>(_timer_target_ms - now_ms) <= 0) ||
+                                     (_timer_end_epoch > 0 && now >= MIN_VALID_EPOCH && static_cast<int64_t>(now) >= _timer_end_epoch);
+                if (timer_expired) {
+                    trigger_idx      = RING_IDX_TIMER;
+                    _timer_running   = false;
+                    _timer_rem_sec   = _timer_preset_sec;
+                    _timer_end_epoch = 0;
+                    save_timer_locked();
+                }
+            }
 
-                        trigger_idx    = static_cast<int>(i);
-                        _last_fire_min = epoch_min;
-                        // One-shot alarm auto-disables after firing
-                        if (a.days_mask == 0) {
-                            a.enabled = false;
-                            save_to_nvs_locked();
+            if (trigger_idx < 0 && now >= MIN_VALID_EPOCH) {
+                // 1. Check active snooze deadline
+                if (_snooze_until > 0 && static_cast<int64_t>(now) >= _snooze_until) {
+                    trigger_idx       = (_snooze_alarm_idx >= 0) ? _snooze_alarm_idx : 0;
+                    _snooze_until     = 0;
+                    _snooze_alarm_idx = -1;
+                    save_snooze_locked();
+                } else {
+                    // 2. Check scheduled alarms once per minute
+                    int64_t epoch_min = static_cast<int64_t>(now) / 60;
+                    if (epoch_min != _last_fire_min) {
+                        struct tm lt = {};
+                        localtime_r(&now, &lt);
+                        for (size_t i = 0; i < _alarms.size(); ++i) {
+                            auto& a = _alarms[i];
+                            if (!a.enabled) continue;
+                            if (a.hour != lt.tm_hour || a.minute != lt.tm_min) continue;
+                            if (a.days_mask != 0 && ((a.days_mask & (1u << lt.tm_wday)) == 0)) continue;
+
+                            trigger_idx    = static_cast<int>(i);
+                            _last_fire_min = epoch_min;
+                            // One-shot alarm auto-disables after firing
+                            if (a.days_mask == 0) {
+                                a.enabled = false;
+                                save_to_nvs_locked();
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
             }
