@@ -18,11 +18,13 @@
 
 #include <driver/sdspi_host.h>
 #include <esp_heap_caps.h>
-#include <esp_mp3_dec.h>
 #include <esp_vfs_fat.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <sdmmc_cmd.h>
+#define MINIMP3_IMPLEMENTATION
+#define MINIMP3_NO_SIMD
+#include "../app_music_player/minimp3.h"
 
 #include <algorithm>
 #include <cctype>
@@ -152,12 +154,23 @@ void AppAlarm::onOpen()
     _ring_alarm_idx   = -1;
 
     // Load Naruto expressions if available in assets partition
-    _img_naruto_calm       = assets::get_image("naruto_calm.bin");
-    _img_naruto_happy      = assets::get_image("naruto_happy.bin");
+    _img_naruto_calm       = assets::get_image("naruto_calm_music.bin");
+    if (_img_naruto_calm.data == nullptr) {
+        _img_naruto_calm   = assets::get_image("naruto_calm.bin");
+    }
+    _img_naruto_happy      = assets::get_image("naruto_happy_music.bin");
+    if (_img_naruto_happy.data == nullptr) {
+        _img_naruto_happy  = assets::get_image("naruto_happy.bin");
+    }
     _img_naruto_sleepy     = assets::get_image("naruto_sleepy.bin");
     _img_naruto_pouty      = assets::get_image("naruto_pouty.bin");
     _shown_naruto_idx      = -1;
     _shown_ring_naruto_idx = -1;
+
+    // Ensure Naruto avatar style is active on custom/naruto branch
+    if (_img_naruto_calm.data != nullptr) {
+        stackchan::avatar::setAvatarStyle(stackchan::avatar::AvatarStyle::Naruto);
+    }
 
     set_sync_text("RTC ready");
 
@@ -491,8 +504,8 @@ void AppAlarm::start_audio(uint8_t tone, const std::string& mp3_path, bool previ
     _audio_running  = true;
     _audio_exited   = false;
 
-    // Internal SRAM stack (safe for SD FATFS + esp_mp3_dec + AudioCodec)
-    if (xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 6144, this, 4, nullptr, 1) != pdPASS) {
+    // Internal SRAM stack (safe for SD FATFS + minimp3 + AudioCodec)
+    if (xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 8192, this, 4, nullptr, 1) != pdPASS) {
         _audio_running = false;
         _audio_exited  = true;
     }
@@ -659,24 +672,25 @@ bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
         return false;
     }
 
-    void* dec = nullptr;
-    if (esp_mp3_dec_open(nullptr, 0, &dec) != ESP_AUDIO_ERR_OK || !dec) {
+    auto* mp3d = new (std::nothrow) mp3dec_t();
+    if (!mp3d) {
+        return false;
+    }
+    mp3dec_init(mp3d);
+
+    constexpr size_t MP3_BUF_CAP = 4096;
+    auto* mp3_buf = static_cast<uint8_t*>(heap_caps_malloc(MP3_BUF_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    auto* pcm_raw = static_cast<int16_t*>(heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+
+    if (!mp3_buf || !pcm_raw) {
+        if (mp3_buf) heap_caps_free(mp3_buf);
+        if (pcm_raw) heap_caps_free(pcm_raw);
+        delete mp3d;
         return false;
     }
 
-    constexpr size_t IN_CAP  = 4096;
-    constexpr size_t OUT_CAP = 8192;
-    uint8_t* in_buf  = static_cast<uint8_t*>(heap_caps_malloc(IN_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    uint8_t* out_buf = static_cast<uint8_t*>(heap_caps_malloc(OUT_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (!in_buf || !out_buf) {
-        if (in_buf) heap_caps_free(in_buf);
-        if (out_buf) heap_caps_free(out_buf);
-        esp_mp3_dec_close(dec);
-        return false;
-    }
-
-    bool played_any      = false;
-    uint32_t start_ms    = GetHAL().millis();
+    bool played_any   = false;
+    uint32_t start_ms = GetHAL().millis();
     std::vector<int16_t> pcm_out;
     pcm_out.reserve(2048);
 
@@ -685,53 +699,52 @@ bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
         if (!fp) {
             break;
         }
-        esp_mp3_dec_reset(dec);
+        mp3dec_init(mp3d);
         size_t buffered = 0;
 
         while (_audio_running.load() && !_audio_abort.load()) {
-            if (preview_only && (GetHAL().millis() - start_ms) >= 3500) {
+            if (preview_only && (GetHAL().millis() - start_ms) >= 4000) {
                 break;
             }
-            if (buffered < IN_CAP / 2) {
-                size_t rd = std::fread(in_buf + buffered, 1, IN_CAP - buffered, fp);
+            if (buffered < 2048 && !std::feof(fp)) {
+                size_t rd = std::fread(mp3_buf + buffered, 1, MP3_BUF_CAP - buffered, fp);
                 buffered += rd;
             }
             if (buffered == 0) {
                 break;
             }
 
-            esp_audio_dec_in_raw_t raw     = {};
-            raw.buffer                     = in_buf;
-            raw.len                        = static_cast<uint32_t>(buffered);
-            esp_audio_dec_out_frame_t frm  = {};
-            frm.buffer                     = out_buf;
-            frm.len                        = OUT_CAP;
-            esp_audio_dec_info_t info      = {};
+            mp3dec_frame_info_t frame_info = {};
+            int samples = mp3dec_decode_frame(mp3d, mp3_buf, static_cast<int>(buffered), pcm_raw, &frame_info);
 
-            esp_audio_err_t err = esp_mp3_dec_decode(dec, &raw, &frm, &info);
-            size_t consumed     = raw.consumed;
-            if (consumed == 0 && err != ESP_AUDIO_ERR_OK) {
-                consumed = std::min<size_t>(buffered, 64);
-            }
-            if (consumed > 0 && consumed <= buffered) {
-                buffered -= consumed;
-                if (buffered > 0) {
-                    std::memmove(in_buf, in_buf + consumed, buffered);
+            if (frame_info.frame_bytes > 0) {
+                size_t consumed = static_cast<size_t>(frame_info.frame_bytes);
+                if (consumed < buffered) {
+                    std::memmove(mp3_buf, mp3_buf + consumed, buffered - consumed);
+                    buffered -= consumed;
+                } else {
+                    buffered = 0;
                 }
+            } else {
+                if (std::feof(fp)) {
+                    break;
+                }
+                if (buffered > 0) {
+                    std::memmove(mp3_buf, mp3_buf + 1, --buffered);
+                }
+                continue;
             }
 
-            if (err == ESP_AUDIO_ERR_OK && frm.decoded_size > 0 && info.sample_rate > 0 && info.channel > 0) {
-                played_any           = true;
-                const int16_t* src   = reinterpret_cast<const int16_t*>(out_buf);
-                int ch               = std::max<int>(info.channel, 1);
-                size_t frames        = frm.decoded_size / (static_cast<size_t>(ch) * sizeof(int16_t));
-                int out_n            = static_cast<int>((static_cast<uint64_t>(frames) * AUDIO_OUTPUT_SAMPLE_RATE) / info.sample_rate);
+            if (samples > 0 && frame_info.hz > 0 && frame_info.channels > 0) {
+                played_any = true;
+                int ch     = frame_info.channels;
+                int out_n  = static_cast<int>((static_cast<uint64_t>(samples) * AUDIO_OUTPUT_SAMPLE_RATE) / frame_info.hz);
                 if (out_n > 0) {
                     pcm_out.resize(static_cast<size_t>(out_n));
                     uint64_t sq = 0;
                     for (int i = 0; i < out_n; ++i) {
-                        size_t si = std::min<size_t>((static_cast<uint64_t>(i) * info.sample_rate) / AUDIO_OUTPUT_SAMPLE_RATE, frames - 1);
-                        int32_t s = (ch >= 2) ? ((int32_t)src[si * ch] + src[si * ch + 1]) / 2 : src[si];
+                        size_t si = std::min<size_t>((static_cast<uint64_t>(i) * frame_info.hz) / AUDIO_OUTPUT_SAMPLE_RATE, static_cast<size_t>(samples - 1));
+                        int32_t s = (ch >= 2) ? ((int32_t)pcm_raw[si * ch] + pcm_raw[si * ch + 1]) / 2 : pcm_raw[si];
                         pcm_out[static_cast<size_t>(i)] = static_cast<int16_t>(s);
                         sq += static_cast<uint64_t>(s * s);
                     }
@@ -746,9 +759,9 @@ bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
         }
     }
 
-    heap_caps_free(in_buf);
-    heap_caps_free(out_buf);
-    esp_mp3_dec_close(dec);
+    heap_caps_free(mp3_buf);
+    heap_caps_free(pcm_raw);
+    delete mp3d;
     return played_any;
 }
 
@@ -799,26 +812,44 @@ void AppAlarm::scan_sd_mp3s()
     if (!mount_sd()) {
         return;
     }
-    auto scan_dir = [&](const std::string& dir_path, int depth, auto&& self_ref) -> void {
-        if (depth > 2 || _sd_mp3_paths.size() >= 60) return;
-        DIR* d = opendir(dir_path.c_str());
-        if (!d) return;
-        while (struct dirent* e = readdir(d)) {
-            if (_sd_mp3_paths.size() >= 60) break;
-            std::string name = e->d_name;
-            if (name.empty() || name[0] == '.') continue;
-            std::string full = dir_path + "/" + name;
-            struct stat st   = {};
-            if (stat(full.c_str(), &st) != 0) continue;
-            if (S_ISDIR(st.st_mode)) {
-                self_ref(full, depth + 1, self_ref);
-            } else if (S_ISREG(st.st_mode) && is_mp3_filename(name)) {
-                _sd_mp3_paths.push_back(full);
+
+    std::vector<std::pair<std::string, int>> stack;
+    stack.push_back({SD_MOUNT_POINT, 0});
+
+    while (!stack.empty() && _sd_mp3_paths.size() < 60) {
+        auto [dir_path, depth] = stack.back();
+        stack.pop_back();
+
+        DIR* dir = opendir(dir_path.c_str());
+        if (!dir) continue;
+
+        struct dirent* ent = nullptr;
+        while ((ent = readdir(dir)) != nullptr && _sd_mp3_paths.size() < 60) {
+            const char* dname = ent->d_name;
+            if (!dname || dname[0] == '\0' || dname[0] == '.') continue;
+
+            std::string name(dname);
+            std::string full_path = dir_path + "/" + name;
+
+            if (is_mp3_filename(name)) {
+                _sd_mp3_paths.push_back(full_path);
+                continue;
+            }
+
+            bool is_dir = (ent->d_type == DT_DIR);
+            if (ent->d_type == DT_UNKNOWN) {
+                struct stat st = {};
+                if (stat(full_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+                    is_dir = true;
+                }
+            }
+
+            if (is_dir && depth < 2) {
+                stack.push_back({full_path, depth + 1});
             }
         }
-        closedir(d);
-    };
-    scan_dir(SD_MOUNT_POINT, 0, scan_dir);
+        closedir(dir);
+    }
     std::sort(_sd_mp3_paths.begin(), _sd_mp3_paths.end());
 }
 
@@ -991,7 +1022,8 @@ void AppAlarm::build_ui()
     _avatar_img = lv_image_create(_stage);
     if (_img_naruto_calm.data != nullptr) {
         lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        lv_image_set_scale(_avatar_img, 150);
+        uint16_t scale = (_img_naruto_calm.header.w > 130) ? 150 : 256;
+        lv_image_set_scale(_avatar_img, scale);
     }
     lv_obj_align(_avatar_img, LV_ALIGN_RIGHT_MID, -14, -10);
     lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
@@ -1118,10 +1150,11 @@ void AppAlarm::build_ui()
         int code = (dh + 2) * 10 + (dm + 2);
         lv_obj_set_user_data(btn, reinterpret_cast<void*>(static_cast<intptr_t>(code)));
         auto cb = [](lv_event_t* e) {
-            auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-            int c      = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(e)))));
-            int d_h    = (c / 10) - 2;
-            int d_m    = (c % 10) - 2;
+            auto* self         = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+            lv_obj_t* target   = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+            int c              = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(target)));
+            int d_h            = (c / 10) - 2;
+            int d_m            = (c % 10) - 2;
             self->_edit_item.hour   = static_cast<uint8_t>((self->_edit_item.hour + 24 + d_h) % 24);
             self->_edit_item.minute = static_cast<uint8_t>((self->_edit_item.minute + 60 + d_m) % 60);
             self->refresh_editor_ui();
@@ -1162,8 +1195,9 @@ void AppAlarm::build_ui()
         lv_obj_add_event_cb(
             _btn_edit_day[i],
             [](lv_event_t* e) {
-                auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-                int d      = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(e)))));
+                auto* self       = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+                lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+                int d            = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(target)));
                 self->_edit_item.days_mask ^= static_cast<uint8_t>(1u << d);
                 self->refresh_editor_ui();
             },
@@ -1419,7 +1453,8 @@ void AppAlarm::build_ui()
     _ring_avatar_img = lv_image_create(_scr_ring);
     if (_img_naruto_happy.data != nullptr) {
         lv_image_set_src(_ring_avatar_img, &_img_naruto_happy);
-        lv_image_set_scale(_ring_avatar_img, 170);
+        uint16_t rscale = (_img_naruto_happy.header.w > 130) ? 160 : 256;
+        lv_image_set_scale(_ring_avatar_img, rscale);
     }
     lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, -4);
     lv_obj_remove_flag(_ring_avatar_img, LV_OBJ_FLAG_CLICKABLE);
@@ -1516,8 +1551,9 @@ void AppAlarm::rebuild_list_rows()
         lv_obj_add_event_cb(
             hit,
             [](lv_event_t* e) {
-                auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-                int idx    = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(e)))));
+                auto* self       = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+                lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+                int idx          = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(target)));
                 self->open_editor(idx, false);
             },
             LV_EVENT_CLICKED, this);
@@ -1529,6 +1565,7 @@ void AppAlarm::rebuild_list_rows()
         lv_obj_set_style_text_font(lt, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_color(lt, lv_color_hex(a.enabled ? COL_WHITE : COL_DIM), 0);
         lv_label_set_text(lt, tbuf);
+        lv_obj_remove_flag(lt, LV_OBJ_FLAG_CLICKABLE);
 
         std::string sub = std::string(AlarmService::labelName(a.label_idx)) + " - " + AlarmService::formatDays(a.days_mask);
         lv_obj_t* ls    = lv_label_create(hit);
@@ -1538,6 +1575,7 @@ void AppAlarm::rebuild_list_rows()
         lv_obj_set_style_text_font(ls, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(ls, lv_color_hex(a.enabled ? COL_AMBER : COL_DIM), 0);
         lv_label_set_text(ls, sub.c_str());
+        lv_obj_remove_flag(ls, LV_OBJ_FLAG_CLICKABLE);
 
         // Right ON/OFF toggle pill
         lv_obj_t* tog = lv_button_create(row);
@@ -1550,11 +1588,13 @@ void AppAlarm::rebuild_list_rows()
         lv_obj_set_style_text_font(tlbl, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(tlbl, lv_color_hex(a.enabled ? COL_WHITE : COL_DIM), 0);
         lv_label_set_text(tlbl, a.enabled ? "ON" : "OFF");
+        lv_obj_remove_flag(tlbl, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(
             tog,
             [](lv_event_t* e) {
-                auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-                int idx    = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(e)))));
+                auto* self       = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+                lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+                int idx          = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(target)));
                 if (idx >= 0 && static_cast<size_t>(idx) < self->_alarms.size()) {
                     self->_alarms[static_cast<size_t>(idx)].enabled = !self->_alarms[static_cast<size_t>(idx)].enabled;
                     AlarmService::instance().setAlarms(self->_alarms);
@@ -1593,12 +1633,14 @@ void AppAlarm::rebuild_sd_rows()
         lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(l, lv_color_hex(COL_WHITE), 0);
         lv_label_set_text(l, title.c_str());
+        lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
 
         lv_obj_add_event_cb(
             b,
             [](lv_event_t* e) {
-                auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-                int idx    = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(e)))));
+                auto* self     = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+                lv_obj_t* btn  = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+                int idx        = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(btn)));
                 if (idx >= 0 && static_cast<size_t>(idx) < self->_sd_mp3_paths.size()) {
                     self->_edit_item.tone     = AlarmService::TONE_SD;
                     self->_edit_item.mp3_path = self->_sd_mp3_paths[static_cast<size_t>(idx)];
@@ -1729,6 +1771,8 @@ void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
             int target_idx                   = _night_mode ? 1 : 0;
             if (target_img->data != nullptr && _shown_naruto_idx != target_idx) {
                 lv_image_set_src(_avatar_img, target_img);
+                uint16_t scale = (target_img->header.w > 130) ? 150 : 256;
+                lv_image_set_scale(_avatar_img, scale);
                 _shown_naruto_idx = target_idx;
             }
             int dy = _night_mode ? 0 : static_cast<int>(std::sin(now_ms * 0.003f) * 2.0f);
@@ -1760,6 +1804,8 @@ void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
             int ring_idx = loud ? 1 : 0;
             if (ring_img->data != nullptr && _shown_ring_naruto_idx != ring_idx) {
                 lv_image_set_src(_ring_avatar_img, ring_img);
+                uint16_t rscale = (ring_img->header.w > 130) ? 160 : 256;
+                lv_image_set_scale(_ring_avatar_img, rscale);
                 _shown_ring_naruto_idx = ring_idx;
             }
         } else if (_ring_face_card) {
