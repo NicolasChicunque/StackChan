@@ -26,14 +26,14 @@ typedef struct
     unsigned char header[4], reserv_buf[511];
 } mp3dec_t;
 
-void mp3dec_init(mp3dec_t *dec);
+static void mp3dec_init(mp3dec_t *dec);
 #ifndef MINIMP3_FLOAT_OUTPUT
 typedef int16_t mp3d_sample_t;
 #else /* MINIMP3_FLOAT_OUTPUT */
 typedef float mp3d_sample_t;
-void mp3dec_f32_to_s16(const float *in, int16_t *out, int num_samples);
+static void mp3dec_f32_to_s16(const float *in, int16_t *out, int num_samples);
 #endif /* MINIMP3_FLOAT_OUTPUT */
-int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_sample_t *pcm, mp3dec_frame_info_t *info);
+static int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_sample_t *pcm, mp3dec_frame_info_t *info);
 
 #ifdef __cplusplus
 }
@@ -1783,7 +1783,7 @@ static int mp3d_find_frame(const uint8_t *mp3, int mp3_bytes, int *free_format_b
     return mp3_bytes;
 }
 
-void mp3dec_init(mp3dec_t *dec)
+static void mp3dec_init(mp3dec_t *dec)
 {
     dec->header[0] = 0;
 }
@@ -1799,7 +1799,7 @@ void mp3dec_init(mp3dec_t *dec)
  *             number of consumed (or skippable) bytes, even when 0 is returned
  * @return number of PCM samples per channel, or 0 on error/EOF
  */
-int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_sample_t *pcm, mp3dec_frame_info_t *info)
+static int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_sample_t *pcm, mp3dec_frame_info_t *info)
 {
     int i = 0, igr, frame_size = 0, success = 1;
     const uint8_t *hdr;
@@ -1896,7 +1896,7 @@ int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_s
 }
 
 #ifdef MINIMP3_FLOAT_OUTPUT
-void mp3dec_f32_to_s16(const float *in, int16_t *out, int num_samples)
+static void mp3dec_f32_to_s16(const float *in, int16_t *out, int num_samples)
 {
     int i = 0;
 #if HAVE_SIMD

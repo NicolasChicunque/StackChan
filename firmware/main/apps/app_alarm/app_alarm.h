@@ -150,6 +150,7 @@ private:
     lv_obj_t* _face_eye_l      = nullptr;
     lv_obj_t* _face_eye_r      = nullptr;
     lv_obj_t* _face_mouth      = nullptr;
+    lv_obj_t* _avatar_img      = nullptr;
     lv_obj_t* _btn_night       = nullptr;
     lv_obj_t* _lbl_night       = nullptr;
 
@@ -188,4 +189,13 @@ private:
     lv_obj_t* _ring_eye_l      = nullptr;
     lv_obj_t* _ring_eye_r      = nullptr;
     lv_obj_t* _ring_mouth      = nullptr;
+    lv_obj_t* _ring_avatar_img = nullptr;
+
+    // Naruto avatar sprites & animation state
+    lv_image_dsc_t _img_naruto_calm   = {};
+    lv_image_dsc_t _img_naruto_happy  = {};
+    lv_image_dsc_t _img_naruto_sleepy = {};
+    lv_image_dsc_t _img_naruto_pouty  = {};
+    int _shown_naruto_idx             = -1;
+    int _shown_ring_naruto_idx        = -1;
 };

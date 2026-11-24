@@ -12,6 +12,7 @@
 #include <hal/board/config.h>
 #include <hal/hal.h>
 #include <mooncake_log.h>
+#include <stackchan/avatar/skins/default/default.h>
 #include <stackchan/stackchan.h>
 #include <wifi_manager.h>
 
@@ -149,6 +150,14 @@ void AppAlarm::onOpen()
     _shake_flag       = false;
     _audio_rms        = 0;
     _ring_alarm_idx   = -1;
+
+    // Load Naruto expressions if available in assets partition
+    _img_naruto_calm       = assets::get_image("naruto_calm.bin");
+    _img_naruto_happy      = assets::get_image("naruto_happy.bin");
+    _img_naruto_sleepy     = assets::get_image("naruto_sleepy.bin");
+    _img_naruto_pouty      = assets::get_image("naruto_pouty.bin");
+    _shown_naruto_idx      = -1;
+    _shown_ring_naruto_idx = -1;
 
     set_sync_text("RTC ready");
 
@@ -944,14 +953,24 @@ void AppAlarm::build_ui()
     lv_obj_set_style_text_color(_lbl_date, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(_lbl_date, "---");
 
-    // Classic expressive StackChan avatar card on right-center of stage
+    // Center-right avatar: supports both Classic StackChan vector face and Naruto sprite
+    auto on_avatar_click = [](lv_event_t* e) {
+        auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
+        bool currently_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
+        auto next_style = currently_naruto ? stackchan::avatar::AvatarStyle::Classic : stackchan::avatar::AvatarStyle::Naruto;
+        stackchan::avatar::setAvatarStyle(next_style);
+        self->refresh_avatar_anim(GetHAL().millis());
+    };
+
+    // Classic expressive StackChan avatar card
     _face_card = lv_obj_create(_stage);
     lv_obj_set_size(_face_card, 118, 86);
     lv_obj_align(_face_card, LV_ALIGN_RIGHT_MID, -14, -10);
     style_box(_face_card, COL_BG, 14);
     lv_obj_set_style_border_width(_face_card, 2, 0);
     lv_obj_set_style_border_color(_face_card, lv_color_hex(COL_TEAL_DK), 0);
-    lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(_face_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_face_card, on_avatar_click, LV_EVENT_CLICKED, this);
 
     _face_eye_l = lv_obj_create(_face_card);
     lv_obj_set_size(_face_eye_l, 16, 16);
@@ -967,6 +986,16 @@ void AppAlarm::build_ui()
     lv_obj_set_size(_face_mouth, 34, 6);
     lv_obj_align(_face_mouth, LV_ALIGN_CENTER, 0, 16);
     style_box(_face_mouth, COL_WHITE, 4);
+
+    // Naruto avatar image
+    _avatar_img = lv_image_create(_stage);
+    if (_img_naruto_calm.data != nullptr) {
+        lv_image_set_src(_avatar_img, &_img_naruto_calm);
+        lv_image_set_scale(_avatar_img, 150);
+    }
+    lv_obj_align(_avatar_img, LV_ALIGN_RIGHT_MID, -14, -10);
+    lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_avatar_img, on_avatar_click, LV_EVENT_CLICKED, this);
 
     _lbl_next = lv_label_create(_stage);
     lv_obj_align(_lbl_next, LV_ALIGN_BOTTOM_MID, 0, -10);
@@ -1386,6 +1415,15 @@ void AppAlarm::build_ui()
     lv_obj_align(_ring_mouth, LV_ALIGN_CENTER, 0, 16);
     style_box(_ring_mouth, COL_WHITE, 6);
 
+    // Naruto avatar image on ringing screen
+    _ring_avatar_img = lv_image_create(_scr_ring);
+    if (_img_naruto_happy.data != nullptr) {
+        lv_image_set_src(_ring_avatar_img, &_img_naruto_happy);
+        lv_image_set_scale(_ring_avatar_img, 170);
+    }
+    lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, -4);
+    lv_obj_remove_flag(_ring_avatar_img, LV_OBJ_FLAG_CLICKABLE);
+
     lv_obj_t* lbl_hint = lv_label_create(_scr_ring);
     lv_obj_align(lbl_hint, LV_ALIGN_CENTER, 0, 48);
     lv_obj_set_style_text_font(lbl_hint, &lv_font_montserrat_12, 0);
@@ -1425,6 +1463,8 @@ void AppAlarm::destroy_ui()
         _scr_ring       = nullptr;
         _face_card      = nullptr;
         _ring_face_card = nullptr;
+        _avatar_img      = nullptr;
+        _ring_avatar_img = nullptr;
     }
 }
 
@@ -1677,21 +1717,63 @@ void AppAlarm::refresh_ringing_ui(uint32_t now_ms)
 
 void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
 {
-    bool blink = ((now_ms % 4200) < 150);
+    bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
+                       _img_naruto_calm.data != nullptr);
 
-    if (_screen == Screen::Clock && _face_card) {
-        int eye_h = _night_mode ? 4 : (blink ? 4 : 16);
-        lv_obj_set_size(_face_eye_l, 16, eye_h);
-        lv_obj_set_size(_face_eye_r, 16, eye_h);
-        lv_obj_set_size(_face_mouth, _night_mode ? 20 : 34, 6);
-        lv_obj_set_style_border_color(_face_card, lv_color_hex(_night_mode ? COL_BLUE : COL_TEAL_DK), 0);
-    } else if (_screen == Screen::Ringing && _ring_face_card) {
-        int dy = static_cast<int>(std::sin(now_ms * 0.025f) * 4.0f);
-        lv_obj_align(_ring_face_card, LV_ALIGN_CENTER, 0, -4 + dy);
-        lv_obj_set_size(_ring_eye_l, 18, blink ? 4 : 14);
-        lv_obj_set_size(_ring_eye_r, 18, blink ? 4 : 14);
-        int mh = 8 + std::clamp(_audio_rms.load() / 320, 0, 14);
-        lv_obj_set_size(_ring_mouth, 40, mh);
-        lv_obj_set_style_radius(_ring_mouth, (mh > 12) ? 8 : 5, 0);
+    if (_screen == Screen::Clock) {
+        if (use_naruto && _avatar_img) {
+            if (_face_card) lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+
+            const lv_image_dsc_t* target_img = _night_mode ? &_img_naruto_sleepy : &_img_naruto_calm;
+            int target_idx                   = _night_mode ? 1 : 0;
+            if (target_img->data != nullptr && _shown_naruto_idx != target_idx) {
+                lv_image_set_src(_avatar_img, target_img);
+                _shown_naruto_idx = target_idx;
+            }
+            int dy = _night_mode ? 0 : static_cast<int>(std::sin(now_ms * 0.003f) * 2.0f);
+            lv_obj_align(_avatar_img, LV_ALIGN_RIGHT_MID, -14, -10 + dy);
+        } else if (_face_card) {
+            if (_avatar_img) lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
+
+            bool blink = ((now_ms % 4200) < 150);
+            int eye_h  = _night_mode ? 4 : (blink ? 4 : 16);
+            lv_obj_set_size(_face_eye_l, 16, eye_h);
+            lv_obj_set_size(_face_eye_r, 16, eye_h);
+            lv_obj_set_size(_face_mouth, _night_mode ? 20 : 34, 6);
+            lv_obj_set_style_border_color(_face_card, lv_color_hex(_night_mode ? COL_BLUE : COL_TEAL_DK), 0);
+        }
+    } else if (_screen == Screen::Ringing) {
+        if (use_naruto && _ring_avatar_img) {
+            if (_ring_face_card) lv_obj_add_flag(_ring_face_card, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(_ring_avatar_img, LV_OBJ_FLAG_HIDDEN);
+
+            int dy = static_cast<int>(std::sin(now_ms * 0.025f) * 5.0f);
+            lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, -4 + dy);
+
+            // Responsive expression based on audio volume
+            bool loud = _audio_rms.load() > 800;
+            const lv_image_dsc_t* ring_img = loud ? &_img_naruto_happy : &_img_naruto_pouty;
+            if (ring_img->data == nullptr) ring_img = &_img_naruto_happy;
+            if (ring_img->data == nullptr) ring_img = &_img_naruto_calm;
+            int ring_idx = loud ? 1 : 0;
+            if (ring_img->data != nullptr && _shown_ring_naruto_idx != ring_idx) {
+                lv_image_set_src(_ring_avatar_img, ring_img);
+                _shown_ring_naruto_idx = ring_idx;
+            }
+        } else if (_ring_face_card) {
+            if (_ring_avatar_img) lv_obj_add_flag(_ring_avatar_img, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(_ring_face_card, LV_OBJ_FLAG_HIDDEN);
+
+            bool blink = ((now_ms % 4200) < 150);
+            int dy     = static_cast<int>(std::sin(now_ms * 0.025f) * 4.0f);
+            lv_obj_align(_ring_face_card, LV_ALIGN_CENTER, 0, -4 + dy);
+            lv_obj_set_size(_ring_eye_l, 18, blink ? 4 : 14);
+            lv_obj_set_size(_ring_eye_r, 18, blink ? 4 : 14);
+            int mh = 8 + std::clamp<int>(_audio_rms.load() / 320, 0, 14);
+            lv_obj_set_size(_ring_mouth, 40, mh);
+            lv_obj_set_style_radius(_ring_mouth, (mh > 12) ? 8 : 5, 0);
+        }
     }
 }
