@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "app_launcher.h"
+#include <apps/app_alarm/alarm_service.h>
 #include <hal/hal.h>
 #include <hal/hal_toggles.h>
 #include <mooncake.h>
@@ -24,6 +25,8 @@ void AppLauncher::onLauncherCreate()
 void AppLauncher::onLauncherOpen()
 {
     mclog::tagInfo(getAppInfo().name, "on open");
+
+    AlarmService::instance().setLauncherActive(true);
 
     LvglLockGuard lock;
 
@@ -52,6 +55,14 @@ void AppLauncher::onLauncherRunning()
     } else {
         _view->update();
         screensaver_update();
+
+        // Background alarm fired while on the launcher: open AppAlarm directly
+        auto& alarm_svc = AlarmService::instance();
+        if (alarm_svc.hasLauncherOpenRequest() && alarm_svc.appId() >= 0) {
+            alarm_svc.clearLauncherOpenRequest();
+            _screensaver.reset();
+            openApp(alarm_svc.appId());
+        }
     }
 
     GetStackChan().update();
@@ -60,6 +71,8 @@ void AppLauncher::onLauncherRunning()
 void AppLauncher::onLauncherClose()
 {
     mclog::tagInfo(getAppInfo().name, "on close");
+
+    AlarmService::instance().setLauncherActive(false);
 
     LvglLockGuard lock;
 
