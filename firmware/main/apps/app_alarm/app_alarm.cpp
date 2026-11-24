@@ -548,9 +548,13 @@ void AppAlarm::start_audio(uint8_t tone, const std::string& mp3_path, bool previ
     _audio_running = true;
     _audio_exited  = false;
 
-    // Must use INTERNAL SRAM stack (20 KB) so NVS/SPI flash cache assertions never fire
-    // and minimp3 L3_decode (~11 KB stack frame) has ample headroom.
-    if (xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 20480, this, 4, nullptr, 1) != pdPASS) {
+    // Use 32 KB PSRAM stack (like AppMusicPlayer) now that all NVS/SD-mount calls run on main task above
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(audio_task_entry, "alarm_aud", 32768, this, 4, nullptr, 1,
+                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (ok != pdPASS) {
+        ok = xTaskCreatePinnedToCore(audio_task_entry, "alarm_aud", 8192, this, 4, nullptr, 1);
+    }
+    if (ok != pdPASS) {
         _audio_running = false;
         _audio_exited  = true;
     }
@@ -693,20 +697,10 @@ void AppAlarm::play_synth_loop(uint8_t tone, bool preview_only)
 bool AppAlarm::play_sd_mp3_loop(const std::string& path, bool preview_only)
 {
     auto codec = Board::GetInstance().GetAudioCodec();
-    if (!codec || !mount_sd()) {
+    if (!codec || !_sd_mounted || path.empty()) {
         return false;
     }
-
-    std::string target = path;
-    if (target.empty()) {
-        scan_sd_mp3s();
-        if (!_sd_mp3_paths.empty()) {
-            target = _sd_mp3_paths[0];
-        }
-    }
-    if (target.empty()) {
-        return false;
-    }
+    const std::string& target = path;
 
     auto* mp3d = static_cast<mp3dec_t*>(heap_caps_malloc(sizeof(mp3dec_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!mp3d) {
