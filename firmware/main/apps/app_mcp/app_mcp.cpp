@@ -507,14 +507,16 @@ void AppMcp::mic_task_loop()
         set_status_text(_auto_mode.load() ? "Speak now (hands-free)" : "Listening... speak now");
         GetHAL().showRgbColor(0, 78, 26);
 
-        size_t pcm_pos       = 0;
-        size_t max_pcm_bytes = _rec_wav_cap - REC_HEADER_BYTES;
+        size_t pcm_pos           = 0;
+        size_t max_pcm_bytes     = _rec_wav_cap - REC_HEADER_BYTES;
         uint32_t speech_start_ms = 0;
         uint32_t last_voice_ms   = 0;
         bool speech_heard        = false;
         int speech_streak        = 0;
+        int active_voice_streak  = 0;
         int voiced_frames        = 0;
         int warmup_frames        = 0;
+        float speech_peak_rms    = 400.0f;
 
         while (_running.load() && !_rec_stop_req.load() && !_play_pending.load() && !_playing.load()) {
             // If user turned AUTO off while silently waiting (no speech yet), exit standby cleanly
@@ -539,14 +541,14 @@ void AppMcp::mic_task_loop()
 
             uint32_t now = GetHAL().millis();
             if (warmup_frames < 2) {
-                noise_floor = noise_floor * 0.85f + rms * 0.15f;
+                noise_floor = std::clamp(noise_floor * 0.85f + std::min(rms, 420) * 0.15f, 80.0f, 380.0f);
                 ++warmup_frames;
                 continue;
             }
 
-            int sens = _mic_sens.load();
-            float min_thr = (sens == 0) ? 680.0f : (sens == 2 ? 320.0f : 440.0f);
-            float mult    = (sens == 0) ? 3.0f : (sens == 2 ? 2.2f : 2.6f);
+            int sens      = _mic_sens.load();
+            float min_thr = (sens == 0) ? 540.0f : (sens == 2 ? 230.0f : 340.0f);
+            float mult    = (sens == 0) ? 2.6f : (sens == 2 ? 1.75f : 2.1f);
             float thresh  = std::max(min_thr, noise_floor * mult);
             if (!speech_heard) {
                 // Store chunk in pre-roll ring while waiting for voice
@@ -558,12 +560,15 @@ void AppMcp::mic_task_loop()
                 }
 
                 if (rms > thresh) {
-                    if (++speech_streak >= 2) {
-                        speech_heard    = true;
-                        speech_start_ms = now;
-                        last_voice_ms   = now;
-                        voiced_frames   = 2;
-                        _rec_speaking   = true;
+                    ++speech_streak;
+                    if (speech_streak >= 2 || rms > thresh * 1.25f) {
+                        speech_heard        = true;
+                        speech_start_ms     = now;
+                        last_voice_ms       = now;
+                        voiced_frames       = 2;
+                        active_voice_streak = 2;
+                        speech_peak_rms     = std::clamp(static_cast<float>(rms), thresh, 2600.0f);
+                        _rec_speaking       = true;
                         set_status_text("Hearing you... (pause to send)");
                         GetHAL().showRgbColor(88, 12, 12);
 
@@ -579,7 +584,12 @@ void AppMcp::mic_task_loop()
                     }
                 } else {
                     speech_streak = 0;
-                    noise_floor   = noise_floor * 0.96f + rms * 0.04f;
+                    if (rms < noise_floor) {
+                        noise_floor = noise_floor * 0.88f + rms * 0.12f;
+                    } else if (rms < noise_floor * 1.35f) {
+                        noise_floor = noise_floor * 0.98f + rms * 0.02f;
+                    }
+                    noise_floor = std::clamp(noise_floor, 80.0f, 380.0f);
                 }
                 continue;
             }
@@ -594,9 +604,21 @@ void AppMcp::mic_task_loop()
                 break;  // Reached 30s max cap
             }
 
-            if (rms > thresh * 0.68f) {
-                last_voice_ms = now;
+            if (rms > thresh) {
+                float capped_rms = std::min(static_cast<float>(rms), 2600.0f);
+                speech_peak_rms  = std::max(speech_peak_rms * 0.994f, speech_peak_rms * 0.80f + capped_rms * 0.20f);
+            } else {
+                speech_peak_rms = std::max(thresh, speech_peak_rms * 0.996f);
+            }
+
+            float cont_thresh = std::max(thresh * 0.88f, noise_floor + (speech_peak_rms - noise_floor) * 0.26f);
+            if (rms > cont_thresh) {
                 ++voiced_frames;
+                if (++active_voice_streak >= 2 || rms > cont_thresh * 1.25f) {
+                    last_voice_ms = now;
+                }
+            } else {
+                active_voice_streak = 0;
             }
 
             // Auto-stop after configured silence pause following speech
