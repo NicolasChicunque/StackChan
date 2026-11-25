@@ -30,7 +30,6 @@ constexpr const char* kStatusBarNvsNs  = "ui_prefs";
 constexpr const char* kStatusBarNvsKey = "sb_mode";
 constexpr int kStatusBarHeight         = 38;
 constexpr int kVolumeStep              = 10;
-constexpr uint32_t kVolPopupDurationMs = 1500;
 
 std::atomic<int> s_cached_sb_mode{-1};
 std::function<void(void)> s_pending_home_cb;
@@ -120,28 +119,15 @@ public:
         _label = std::make_unique<Label>(parent);
         _label->setText("");
         _label->setTextColor(lv_color_hex(colorText));
-        _label->setTextFont(&lv_font_montserrat_14);
-        _label->align(LV_ALIGN_LEFT_MID, 32, 0);
+        _label->setTextFont(&lv_font_montserrat_12);
+        _label->align(LV_ALIGN_LEFT_MID, 76, 0);
         lv_obj_remove_flag(_label->get(), LV_OBJ_FLAG_CLICKABLE);
 
         update();
     }
 
-    void showTemporaryText(const std::string& txt, uint32_t until_ms)
-    {
-        _override_until = until_ms;
-        _label->setText(txt);
-    }
-
     void update() override
     {
-        if (_override_until != 0) {
-            if (static_cast<int32_t>(GetHAL().millis() - _override_until) < 0) {
-                return;
-            }
-            _override_until = 0;
-        }
-
         auto now   = std::chrono::system_clock::now();
         auto now_t = std::chrono::system_clock::to_time_t(now);
 
@@ -158,7 +144,6 @@ public:
 
 private:
     std::unique_ptr<Label> _label;
-    uint32_t _override_until = 0;
 };
 
 class BatteryIcon {
@@ -178,7 +163,7 @@ public:
         lv_obj_remove_flag(_bat_top->get(), LV_OBJ_FLAG_CLICKABLE);
 
         _bar = std::make_unique<uitk::lvgl_cpp::Bar>(parent);
-        _bar->setSize(24, 12);
+        _bar->setSize(22, 11);
         _bar->setRadius(3);
         _bar->setRadius(0, LV_PART_INDICATOR);
         _bar->setBgColor(lv_color_hex(colorSecondary));
@@ -204,7 +189,7 @@ public:
     void align(lv_align_t align, int32_t x_ofs, int32_t y_ofs)
     {
         _bar->align(align, x_ofs, y_ofs);
-        lv_obj_align_to(_bat_top->get(), _bar->get(), LV_ALIGN_CENTER, 13, 0);
+        lv_obj_align_to(_bat_top->get(), _bar->get(), LV_ALIGN_CENTER, 12, 0);
         lv_obj_align_to(_lightning_icon->get(), _bar->get(), LV_ALIGN_CENTER, 0, 0);
     }
 
@@ -241,11 +226,13 @@ public:
         _label_level->setText("");
         _label_level->setTextColor(lv_color_hex(colorPrimary));
         _label_level->setTextFont(&lv_font_montserrat_12);
-        _label_level->align(LV_ALIGN_LEFT_MID, 90, 0);
+        lv_obj_set_width(_label_level->get(), 34);
+        lv_obj_set_style_text_align(_label_level->get(), LV_TEXT_ALIGN_RIGHT, 0);
+        _label_level->align(LV_ALIGN_LEFT_MID, 125, 0);
         lv_obj_remove_flag(_label_level->get(), LV_OBJ_FLAG_CLICKABLE);
 
         _battery_icon = std::make_unique<BatteryIcon>(parent, colorSecondary, colorPrimary);
-        _battery_icon->align(LV_ALIGN_LEFT_MID, 128, 0);
+        _battery_icon->align(LV_ALIGN_LEFT_MID, 162, 0);
 
         update();
     }
@@ -268,7 +255,7 @@ public:
     Wifi(lv_obj_t* parent, uint32_t colorPrimary)
     {
         _wifi_icon = std::make_unique<Image>(parent);
-        _wifi_icon->align(LV_ALIGN_LEFT_MID, 6, 0);
+        _wifi_icon->align(LV_ALIGN_LEFT_MID, 50, 0);
         _wifi_icon->setImageRecolor(lv_color_hex(colorPrimary));
         _wifi_icon->setImageRecolorOpa(LV_OPA_COVER);
         lv_obj_remove_flag(_wifi_icon->get(), LV_OBJ_FLAG_CLICKABLE);
@@ -311,9 +298,45 @@ private:
     lv_image_dsc_t _icon_wifi_slash;
 };
 
+class VolumeValueLabel : public Widget {
+public:
+    VolumeValueLabel(lv_obj_t* parent, uint32_t colorText)
+    {
+        _label = std::make_unique<Label>(parent);
+        _label->setText("");
+        _label->setTextColor(lv_color_hex(colorText));
+        _label->setTextFont(&lv_font_montserrat_14);
+        lv_obj_set_width(_label->get(), 32);
+        lv_obj_set_style_text_align(_label->get(), LV_TEXT_ALIGN_CENTER, 0);
+        _label->align(LV_ALIGN_LEFT_MID, 239, 0);
+        lv_obj_remove_flag(_label->get(), LV_OBJ_FLAG_CLICKABLE);
+
+        update();
+    }
+
+    void setImmediate(int vol)
+    {
+        _last_vol = vol;
+        _label->setText(fmt::format("{}", vol));
+    }
+
+    void update() override
+    {
+        int cur = static_cast<int>(GetHAL().getSpeakerVolume());
+        if (cur != _last_vol) {
+            _last_vol = cur;
+            _label->setText(fmt::format("{}", cur));
+        }
+    }
+
+private:
+    std::unique_ptr<Label> _label;
+    int _last_vol = -1;
+};
+
 /**
- * @brief Seamless borderless action button integrated directly into the 38px top bar.
- * Uses LV_EVENT_CLICKED with extended click area and pressed highlight feedback.
+ * @brief Tactile pill button with a clean 3px margin and 1px subtle border
+ * so buttons clearly stand out from the status information labels.
  */
 class BarActionButton {
 public:
@@ -322,20 +345,22 @@ public:
         : _on_click(std::move(onClickCb))
     {
         _btn = lv_obj_create(parent);
-        lv_obj_set_pos(_btn, x_pos, 0);
-        lv_obj_set_size(_btn, width, kStatusBarHeight);
+        lv_obj_set_pos(_btn, x_pos, 3);
+        lv_obj_set_size(_btn, width, kStatusBarHeight - 6);  // 32px tall with 3px top/bottom margin
         lv_obj_set_style_bg_color(_btn, lv_color_hex(colorPrimary), 0);
-        lv_obj_set_style_bg_opa(_btn, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_opa(_btn, 28, 0);
         lv_obj_set_style_bg_color(_btn, lv_color_hex(colorPrimary), LV_STATE_PRESSED);
-        lv_obj_set_style_bg_opa(_btn, 52, LV_STATE_PRESSED);
-        lv_obj_set_style_border_width(_btn, 0, 0);
+        lv_obj_set_style_bg_opa(_btn, 84, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(_btn, 1, 0);
+        lv_obj_set_style_border_color(_btn, lv_color_hex(colorPrimary), 0);
+        lv_obj_set_style_border_opa(_btn, 170, 0);
         lv_obj_set_style_outline_width(_btn, 0, 0);
         lv_obj_set_style_shadow_width(_btn, 0, 0);
         lv_obj_set_style_radius(_btn, 8, 0);
         lv_obj_set_style_pad_all(_btn, 0, 0);
         lv_obj_remove_flag(_btn, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(_btn, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_ext_click_area(_btn, 8);
+        lv_obj_set_ext_click_area(_btn, 6);
 
         if (useHomeIcon) {
             _icon_home = assets::get_image("icon_home.bin");
@@ -346,8 +371,8 @@ public:
             lv_image_set_src(img, &_icon_home);
             lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
             lv_obj_set_style_image_recolor(img, lv_color_hex(colorPrimary), 0);
-            if (_icon_home.header.h > 26) {
-                uint16_t scale = static_cast<uint16_t>((24 * 256) / _icon_home.header.h);
+            if (_icon_home.header.h > 22) {
+                uint16_t scale = static_cast<uint16_t>((20 * 256) / _icon_home.header.h);
                 lv_image_set_scale(img, scale);
             }
             lv_obj_center(img);
@@ -389,7 +414,7 @@ public:
     {
         (void)parent;
         // Place the status bar on lv_layer_top() so no screen or modal container created
-        // on lv_screen_active() can ever cover or block touch events on VOL-, VOL+, or Home!
+        // on lv_screen_active() can ever cover or block touch events on Home, VOL-, or VOL+!
         _panel = std::make_unique<uitk::lvgl_cpp::Container>(lv_layer_top());
         _panel->setBgColor(lv_color_hex(colorSecondary));
         _panel->setBgOpa(LV_OPA_COVER);
@@ -400,29 +425,32 @@ public:
         _panel->setRadius(0);
         _panel->setPadding(0, 0, 0, 0);
 
-        auto time_widget = std::make_unique<TimeLabel>(_panel->get(), colorPrimary);
-        _time_label_ptr  = time_widget.get();
-        _widgets.push_back(std::move(time_widget));
-        _widgets.push_back(std::make_unique<Battery>(_panel->get(), colorSecondary, colorPrimary));
-        _widgets.push_back(std::make_unique<Wifi>(_panel->get(), colorPrimary));
-
-        // Right-side borderless touch buttons:
-        // [x=162..212 (50px): VOL-]  [x=214..264 (50px): VOL+]  [x=266..320 (54px): HOME]
-        _btn_vol_dn = std::make_unique<BarActionButton>(
-            _panel->get(), 162, 50, colorPrimary, LV_SYMBOL_VOLUME_MID "-", false,
-            [this]() { adjust_global_volume(-kVolumeStep); });
-
-        _btn_vol_up = std::make_unique<BarActionButton>(
-            _panel->get(), 214, 50, colorPrimary, LV_SYMBOL_VOLUME_MAX "+", false,
-            [this]() { adjust_global_volume(+kVolumeStep); });
-
+        // Far Left: Home button [x = 4..44, w = 40]
         _btn_home = std::make_unique<BarActionButton>(
-            _panel->get(), 266, 54, colorPrimary, LV_SYMBOL_HOME, true, [this]() {
+            _panel->get(), 4, 40, colorPrimary, LV_SYMBOL_HOME, true, [this]() {
                 _home_clicked = true;
                 if (onHomeClicked) {
                     onHomeClicked();
                 }
             });
+
+        // Center Status Information: [Wi-Fi (x=50)] [Time (x=76)] [Battery % + Icon (x=125..187)]
+        _widgets.push_back(std::make_unique<Wifi>(_panel->get(), colorPrimary));
+        _widgets.push_back(std::make_unique<TimeLabel>(_panel->get(), colorPrimary));
+        _widgets.push_back(std::make_unique<Battery>(_panel->get(), colorSecondary, colorPrimary));
+
+        // Far Right: [ - (x=194..238) ]  [ Vol 0..100 (x=239..271) ]  [ + (x=272..316) ]
+        _btn_vol_dn = std::make_unique<BarActionButton>(
+            _panel->get(), 194, 44, colorPrimary, LV_SYMBOL_MINUS, false,
+            [this]() { adjust_global_volume(-kVolumeStep); });
+
+        auto vol_widget = std::make_unique<VolumeValueLabel>(_panel->get(), colorPrimary);
+        _vol_label_ptr  = vol_widget.get();
+        _widgets.push_back(std::move(vol_widget));
+
+        _btn_vol_up = std::make_unique<BarActionButton>(
+            _panel->get(), 272, 44, colorPrimary, LV_SYMBOL_PLUS, false,
+            [this]() { adjust_global_volume(+kVolumeStep); });
 
         int init_y = _fixed_mode ? _pos_y_show : _pos_y_hide;
         _panel->setPos(0, init_y);
@@ -445,7 +473,7 @@ public:
             }
         }
 
-        if (GetHAL().millis() - _last_update_tick > 500) {
+        if (GetHAL().millis() - _last_update_tick > 400) {
             _last_update_tick = GetHAL().millis();
             for (auto& widget : _widgets) {
                 widget->update();
@@ -503,15 +531,15 @@ private:
     const int _pos_y_show = 0;
     const int _pos_y_hide = -kStatusBarHeight;
 
-    bool _fixed_mode        = true;
-    bool _home_clicked      = false;
-    bool _action_touched    = false;
-    TimeLabel* _time_label_ptr = nullptr;
+    bool _fixed_mode                = true;
+    bool _home_clicked              = false;
+    bool _action_touched            = false;
+    VolumeValueLabel* _vol_label_ptr = nullptr;
     std::unique_ptr<Container> _panel;
     std::vector<std::unique_ptr<Widget>> _widgets;
+    std::unique_ptr<BarActionButton> _btn_home;
     std::unique_ptr<BarActionButton> _btn_vol_dn;
     std::unique_ptr<BarActionButton> _btn_vol_up;
-    std::unique_ptr<BarActionButton> _btn_home;
     AnimateValue _pos_y_anim;
     bool _is_hidden            = false;
     bool _hide_panel_flag      = false;
@@ -523,8 +551,8 @@ private:
         int cur  = static_cast<int>(GetHAL().getSpeakerVolume());
         int next = std::clamp(cur + delta, 0, 100);
         GetHAL().setSpeakerVolume(static_cast<uint8_t>(next), true);
-        if (_time_label_ptr) {
-            _time_label_ptr->showTemporaryText(fmt::format("VOL {}%", next), GetHAL().millis() + kVolPopupDurationMs);
+        if (_vol_label_ptr) {
+            _vol_label_ptr->setImmediate(next);
         }
     }
 };
@@ -532,7 +560,7 @@ private:
 }  // namespace status_bar_view
 
 /**
- * @brief StatusBar controller supporting Fixed and AutoHide modes + VOL-/VOL+/Home buttons.
+ * @brief StatusBar controller supporting Fixed and AutoHide modes + Home and [- Vol +] buttons.
  *
  */
 class StatusBar {

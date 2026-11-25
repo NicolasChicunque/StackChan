@@ -1280,21 +1280,15 @@ void AppMcp::build_ui()
     const int stage_y = top_y + (is_fix ? 22 : 26);
     const int stage_h = 180 - stage_y;
 
-    // App header below system status bar: MCP IP (left) + Volume (right; battery is in top bar)
+    // App header below system status bar: MCP IP across full width (battery & volume are in top bar)
     _lbl_ip = lv_label_create(_root);
     lv_obj_set_pos(_lbl_ip, 10, hdr_y);
-    lv_obj_set_size(_lbl_ip, 224, 18);
+    lv_obj_set_size(_lbl_ip, 300, 18);
     lv_label_set_long_mode(_lbl_ip, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_ip, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_ip, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(_lbl_ip, "MCP  Wi-Fi...");
-
-    _lbl_batt = lv_label_create(_root);
-    lv_obj_set_pos(_lbl_batt, 236, hdr_y + 1);
-    lv_obj_set_width(_lbl_batt, 76);
-    lv_obj_set_style_text_align(_lbl_batt, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_style_text_font(_lbl_batt, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(_lbl_batt, lv_color_hex(COL_DIM), 0);
+    _lbl_batt = nullptr;
 
     // Center stage (tap to dictate / stop)
     _stage = lv_obj_create(_root);
@@ -1565,10 +1559,6 @@ void AppMcp::refresh_ui(uint32_t now)
         lv_obj_set_style_text_color(_lbl_ip, lv_color_hex(COL_YELLOW), 0);
         lv_label_set_text(_lbl_ip, "MCP  Connecting...");
     }
-
-    char vol_str[20];
-    std::snprintf(vol_str, sizeof(vol_str), "VOL %d%%", _volume.load());
-    lv_label_set_text(_lbl_batt, vol_str);
 
     lv_label_set_text(_lbl_status, st.c_str());
 
