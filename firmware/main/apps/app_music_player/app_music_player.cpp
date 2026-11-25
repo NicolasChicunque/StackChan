@@ -98,23 +98,17 @@ constexpr uint32_t PALETTE[8] = {
     0x00C7BE, 0x007AFF, 0x5856D6, 0xAF52DE,
 };
 
-// Top status/progress geometry
-constexpr int TITLE_Y  = 4;
+// Top status/progress geometry (relative to dynamic top offset)
 constexpr int BAR_X    = 8;
-constexpr int BAR_Y    = 26;
 constexpr int BAR_W    = 304;
 constexpr int BAR_H    = 6;
-constexpr int TIME_Y   = 35;
-constexpr int STATUS_Y = 49;
 
-// Center stage area (y = 64 .. 184)
+// Center stage area
 constexpr int STAGE_X  = 8;
-constexpr int STAGE_Y  = 64;
 constexpr int STAGE_W  = 304;
-constexpr int STAGE_H  = 120;
 
-// Bottom 6-button control bar (y = 190 .. 232)
-constexpr int BAR6_Y   = 190;
+// Bottom 6-button control bar (y = 192 .. 234)
+constexpr int BAR6_Y   = 192;
 constexpr int BAR6_H   = 42;
 constexpr int BAR6_W   = 48;
 constexpr int BAR6_GAP = 4;
@@ -137,17 +131,17 @@ struct CfgBtnSpec {
 // Settings screen layout:
 // Row 1: LOOP | SHUFFLE | LIGHTS | MOVE
 // Row 2: SD LIST | RADIO | WEB/QR | HEAD
-// Footer left: AVATAR (Classic/Naruto toggle), plus BACK and EXIT
+// Footer: AVATAR (Classic/Naruto toggle) + BACK (Exit is in the top status bar)
 constexpr CfgBtnSpec CFG_BTN_SPECS[9] = {
-    {"loop",     8,   42,  73,  54},
-    {"shuf",     85,  42,  73,  54},
-    {"lights",   162, 42,  73,  54},
-    {"move",     239, 42,  73,  54},
-    {"playlist", 8,   102, 73,  54},
-    {"radio",    85,  102, 73,  54},
-    {"web",      162, 102, 73,  54},
-    {"head",     239, 102, 73,  54},
-    {"avatar",   8,   170, 104, 44},
+    {"loop",     8,   56,  73,  56},
+    {"shuf",     85,  56,  73,  56},
+    {"lights",   162, 56,  73,  56},
+    {"move",     239, 56,  73,  56},
+    {"playlist", 8,   120, 73,  56},
+    {"radio",    85,  120, 73,  56},
+    {"web",      162, 120, 73,  56},
+    {"head",     239, 120, 73,  56},
+    {"avatar",   8,   186, 148, 44},
 };
 
 uint16_t read_u16_le(const uint8_t* p)
@@ -1936,16 +1930,30 @@ void AppMusicPlayer::build_ui()
     lv_obj_set_style_bg_color(_root_screen, lv_color_hex(COL_BG), 0);
     lv_obj_remove_flag(_root_screen, LV_OBJ_FLAG_SCROLLABLE);
 
+    const int top_y    = view::get_status_bar_top_offset();
+    const bool is_fix  = (top_y > 0);
+    const int title_y  = top_y + 2;
+    const int bar_y    = top_y + 22;
+    const int time_y   = top_y + 30;
+    const int status_y = top_y + 43;
+    const int stage_y  = top_y + 56;
+    const int stage_h  = 188 - stage_y;
+    const int sub_hdr_y  = top_y + 2;
+    const int row_y0     = top_y + (is_fix ? 24 : 26);
+    const int row_step   = is_fix ? 26 : 29;
+    const int row_h      = is_fix ? 23 : 26;
+    const int list_info_y = is_fix ? 185 : 178;
+
     /* ============================ 1. MAIN VIEW ============================= */
     _main_cont = lv_obj_create(_root_screen);
     lv_obj_set_size(_main_cont, W, H);
     lv_obj_set_pos(_main_cont, 0, 0);
     style_flat_box(_main_cont, COL_BG, 0);
 
-    // Track title top-left (tap to open playlist)
+    // Track title across full width (battery & Wi-Fi are already in the system status bar)
     _lbl_title = lv_label_create(_main_cont);
-    lv_obj_set_pos(_lbl_title, 10, TITLE_Y);
-    lv_obj_set_size(_lbl_title, 232, 20);
+    lv_obj_set_pos(_lbl_title, 10, title_y);
+    lv_obj_set_size(_lbl_title, 300, 20);
     lv_label_set_long_mode(_lbl_title, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_title, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_TEXT), 0);
@@ -1962,50 +1970,9 @@ void AppMusicPlayer::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    // Battery widget top-right (tap for audio/battery diagnostic)
-    _batt_cont = lv_obj_create(_main_cont);
-    lv_obj_set_pos(_batt_cont, 244, 2);
-    lv_obj_set_size(_batt_cont, 72, 20);
-    style_flat_box(_batt_cont, COL_BG, 0);
-    lv_obj_add_flag(_batt_cont, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(
-        _batt_cont,
-        [](lv_event_t* e) {
-            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
-            self->set_status(self->audio_state_summary());
-            self->refresh_main_ui(GetHAL().millis());
-        },
-        LV_EVENT_CLICKED, this);
-
-    _lbl_batt = lv_label_create(_batt_cont);
-    lv_obj_set_pos(_lbl_batt, 0, 2);
-    lv_obj_set_style_text_font(_lbl_batt, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(_lbl_batt, lv_color_hex(COL_DIM), 0);
-    lv_label_set_text(_lbl_batt, "--%");
-
-    _batt_box = lv_obj_create(_batt_cont);
-    lv_obj_set_pos(_batt_box, 42, 4);
-    lv_obj_set_size(_batt_box, 22, 12);
-    style_flat_box(_batt_box, COL_BG, 2);
-    lv_obj_set_style_border_width(_batt_box, 1, 0);
-    lv_obj_set_style_border_color(_batt_box, lv_color_hex(COL_DIM), 0);
-    lv_obj_remove_flag(_batt_box, LV_OBJ_FLAG_CLICKABLE);
-
-    _batt_fill = lv_obj_create(_batt_box);
-    lv_obj_set_pos(_batt_fill, 1, 1);
-    lv_obj_set_size(_batt_fill, 16, 8);
-    style_flat_box(_batt_fill, COL_GREEN, 1);
-    lv_obj_remove_flag(_batt_fill, LV_OBJ_FLAG_CLICKABLE);
-
-    _batt_tip = lv_obj_create(_batt_cont);
-    lv_obj_set_pos(_batt_tip, 64, 7);
-    lv_obj_set_size(_batt_tip, 3, 6);
-    style_flat_box(_batt_tip, COL_DIM, 1);
-    lv_obj_remove_flag(_batt_tip, LV_OBJ_FLAG_CLICKABLE);
-
     // Touch-seekable progress bar
     _bar_bg = lv_obj_create(_main_cont);
-    lv_obj_set_pos(_bar_bg, BAR_X, BAR_Y);
+    lv_obj_set_pos(_bar_bg, BAR_X, bar_y);
     lv_obj_set_size(_bar_bg, BAR_W, BAR_H);
     style_flat_box(_bar_bg, COL_CARD_HI, 3);
     lv_obj_add_flag(_bar_bg, LV_OBJ_FLAG_CLICKABLE);
@@ -2034,19 +2001,19 @@ void AppMusicPlayer::build_ui()
 
     // Elapsed time, track counter, and total duration
     _lbl_elapsed = lv_label_create(_main_cont);
-    lv_obj_set_pos(_lbl_elapsed, 10, TIME_Y);
+    lv_obj_set_pos(_lbl_elapsed, 10, time_y);
     lv_obj_set_style_text_font(_lbl_elapsed, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_elapsed, lv_color_hex(COL_DIM), 0);
 
     _lbl_track_num = lv_label_create(_main_cont);
-    lv_obj_set_pos(_lbl_track_num, 180, TIME_Y);
+    lv_obj_set_pos(_lbl_track_num, 180, time_y);
     lv_obj_set_width(_lbl_track_num, 85);
     lv_obj_set_style_text_align(_lbl_track_num, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(_lbl_track_num, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_track_num, lv_color_hex(COL_DIM), 0);
 
     _lbl_duration = lv_label_create(_main_cont);
-    lv_obj_set_pos(_lbl_duration, 268, TIME_Y);
+    lv_obj_set_pos(_lbl_duration, 268, time_y);
     lv_obj_set_width(_lbl_duration, 44);
     lv_obj_set_style_text_align(_lbl_duration, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(_lbl_duration, &lv_font_montserrat_12, 0);
@@ -2054,12 +2021,12 @@ void AppMusicPlayer::build_ui()
 
     // Volume / version and playback status
     _lbl_vol_ver = lv_label_create(_main_cont);
-    lv_obj_set_pos(_lbl_vol_ver, 10, STATUS_Y);
+    lv_obj_set_pos(_lbl_vol_ver, 10, status_y);
     lv_obj_set_style_text_font(_lbl_vol_ver, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_vol_ver, lv_color_hex(COL_DIM), 0);
 
     _lbl_status = lv_label_create(_main_cont);
-    lv_obj_set_pos(_lbl_status, 110, STATUS_Y);
+    lv_obj_set_pos(_lbl_status, 110, status_y);
     lv_obj_set_width(_lbl_status, 202);
     lv_obj_set_style_text_align(_lbl_status, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_long_mode(_lbl_status, LV_LABEL_LONG_CLIP);
@@ -2068,8 +2035,8 @@ void AppMusicPlayer::build_ui()
 
     // Center stage: animated Naruto or classic StackChan avatar + floating musical notes
     _stage_cont = lv_obj_create(_main_cont);
-    lv_obj_set_pos(_stage_cont, STAGE_X, STAGE_Y);
-    lv_obj_set_size(_stage_cont, STAGE_W, STAGE_H);
+    lv_obj_set_pos(_stage_cont, STAGE_X, stage_y);
+    lv_obj_set_size(_stage_cont, STAGE_W, stage_h);
     style_flat_box(_stage_cont, COL_BG, 12);
 
     auto on_stage_avatar_click = [](lv_event_t* e) {
@@ -2083,13 +2050,17 @@ void AppMusicPlayer::build_ui()
     _avatar_img = lv_image_create(_stage_cont);
     if (_img_naruto_calm.data != nullptr) {
         lv_image_set_src(_avatar_img, &_img_naruto_calm);
+        if (is_fix && _img_naruto_calm.header.h > 96) {
+            uint16_t scale = static_cast<uint16_t>((96 * 256) / _img_naruto_calm.header.h);
+            lv_image_set_scale(_avatar_img, scale);
+        }
     }
     lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_avatar_img, on_stage_avatar_click, LV_EVENT_CLICKED, this);
 
     _face_card = lv_obj_create(_stage_cont);
-    lv_obj_set_size(_face_card, 136, 96);
+    lv_obj_set_size(_face_card, 132, is_fix ? 84 : 96);
     lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, 0);
     style_flat_box(_face_card, COL_CARD, 18);
     lv_obj_set_style_border_width(_face_card, 2, 0);
@@ -2195,7 +2166,7 @@ void AppMusicPlayer::build_ui()
     lv_obj_add_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* lbl_cfg_hdr = lv_label_create(_settings_cont);
-    lv_obj_set_pos(lbl_cfg_hdr, 10, 10);
+    lv_obj_set_pos(lbl_cfg_hdr, 10, sub_hdr_y + 2);
     lv_obj_set_size(lbl_cfg_hdr, 220, 24);
     lv_obj_set_style_text_font(lbl_cfg_hdr, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_cfg_hdr, lv_color_hex(COL_TEXT), 0);
@@ -2271,10 +2242,10 @@ void AppMusicPlayer::build_ui()
             LV_EVENT_CLICKED, this);
     }
 
-    // Settings footer: AVATAR (left, above) | BACK | EXIT
+    // Settings footer: AVATAR (left, above) | BACK (wide right)
     lv_obj_t* btn_cfg_back = lv_button_create(_settings_cont);
-    lv_obj_set_pos(btn_cfg_back, 118, 170);
-    lv_obj_set_size(btn_cfg_back, 110, 44);
+    lv_obj_set_pos(btn_cfg_back, 164, 186);
+    lv_obj_set_size(btn_cfg_back, 148, 44);
     style_flat_box(btn_cfg_back, COL_PLAY_ON, 10);
     lv_obj_t* lbl_back = lv_label_create(btn_cfg_back);
     lv_obj_center(lbl_back);
@@ -2289,23 +2260,6 @@ void AppMusicPlayer::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_cfg_exit = lv_button_create(_settings_cont);
-    lv_obj_set_pos(btn_cfg_exit, 234, 170);
-    lv_obj_set_size(btn_cfg_exit, 78, 44);
-    style_flat_box(btn_cfg_exit, COL_CARD_HI, 10);
-    lv_obj_t* lbl_cfg_exit = lv_label_create(btn_cfg_exit);
-    lv_obj_center(lbl_cfg_exit);
-    lv_obj_set_style_text_font(lbl_cfg_exit, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_cfg_exit, lv_color_hex(COL_YELLOW), 0);
-    lv_label_set_text(lbl_cfg_exit, "EXIT");
-    lv_obj_add_event_cb(
-        btn_cfg_exit,
-        [](lv_event_t* e) {
-            auto* self = static_cast<AppMusicPlayer*>(lv_event_get_user_data(e));
-            self->close();
-        },
-        LV_EVENT_CLICKED, this);
-
     /* =========================== 3. PLAYLIST VIEW ========================== */
     _list_cont = lv_obj_create(_root_screen);
     lv_obj_set_size(_list_cont, W, H);
@@ -2314,7 +2268,7 @@ void AppMusicPlayer::build_ui()
     lv_obj_add_flag(_list_cont, LV_OBJ_FLAG_HIDDEN);
 
     _lbl_list_hdr = lv_label_create(_list_cont);
-    lv_obj_set_pos(_lbl_list_hdr, 10, 4);
+    lv_obj_set_pos(_lbl_list_hdr, 10, sub_hdr_y);
     lv_obj_set_size(_lbl_list_hdr, 130, 22);
     lv_obj_set_style_text_font(_lbl_list_hdr, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_lbl_list_hdr, lv_color_hex(COL_TEXT), 0);
@@ -2329,7 +2283,7 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     _lbl_list_count = lv_label_create(_list_cont);
-    lv_obj_set_pos(_lbl_list_count, 135, 7);
+    lv_obj_set_pos(_lbl_list_count, 135, sub_hdr_y + 3);
     lv_obj_set_width(_lbl_list_count, 177);
     lv_obj_set_style_text_align(_lbl_list_count, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(_lbl_list_count, &lv_font_montserrat_12, 0);
@@ -2338,13 +2292,13 @@ void AppMusicPlayer::build_ui()
     for (int i = 0; i < PAGE_ROWS; ++i) {
         lv_obj_t* row = lv_button_create(_list_cont);
         _list_rows[i] = row;
-        lv_obj_set_pos(row, 8, 28 + i * 29);
-        lv_obj_set_size(row, 304, 26);
+        lv_obj_set_pos(row, 8, row_y0 + i * row_step);
+        lv_obj_set_size(row, 304, row_h);
         style_flat_box(row, COL_CARD, 8);
 
         lv_obj_t* rlbl    = lv_label_create(row);
         _list_row_lbls[i] = rlbl;
-        lv_obj_set_pos(rlbl, 10, 4);
+        lv_obj_set_pos(rlbl, 10, is_fix ? 2 : 4);
         lv_obj_set_width(rlbl, 284);
         lv_label_set_long_mode(rlbl, LV_LABEL_LONG_CLIP);
         lv_obj_set_style_text_font(rlbl, &lv_font_montserrat_16, 0);
@@ -2371,17 +2325,17 @@ void AppMusicPlayer::build_ui()
     }
 
     _lbl_list_empty1 = lv_label_create(_list_cont);
-    lv_obj_set_pos(_lbl_list_empty1, 22, 60);
+    lv_obj_set_pos(_lbl_list_empty1, 22, top_y + 48);
     lv_obj_set_style_text_font(_lbl_list_empty1, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_lbl_list_empty1, lv_color_hex(COL_DIM), 0);
 
     _lbl_list_empty2 = lv_label_create(_list_cont);
-    lv_obj_set_pos(_lbl_list_empty2, 22, 84);
+    lv_obj_set_pos(_lbl_list_empty2, 22, top_y + 72);
     lv_obj_set_style_text_font(_lbl_list_empty2, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_lbl_list_empty2, lv_color_hex(COL_DIM), 0);
 
     _lbl_list_info = lv_label_create(_list_cont);
-    lv_obj_set_pos(_lbl_list_info, 8, 178);
+    lv_obj_set_pos(_lbl_list_info, 8, list_info_y);
     lv_obj_set_width(_lbl_list_info, 304);
     lv_label_set_long_mode(_lbl_list_info, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_list_info, &lv_font_montserrat_12, 0);
@@ -2451,7 +2405,7 @@ void AppMusicPlayer::build_ui()
     lv_obj_add_flag(_head_cont, LV_OBJ_FLAG_HIDDEN);
 
     _lbl_head_hdr = lv_label_create(_head_cont);
-    lv_obj_set_pos(_lbl_head_hdr, 10, 6);
+    lv_obj_set_pos(_lbl_head_hdr, 10, sub_hdr_y + 2);
     lv_obj_set_size(_lbl_head_hdr, 240, 22);
     lv_obj_set_style_text_font(_lbl_head_hdr, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_lbl_head_hdr, lv_color_hex(COL_TEXT), 0);
@@ -2466,35 +2420,35 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     lv_obj_t* head_card = lv_obj_create(_head_cont);
-    lv_obj_set_pos(head_card, 20, 40);
-    lv_obj_set_size(head_card, 280, 150);
+    lv_obj_set_pos(head_card, 20, top_y + 26);
+    lv_obj_set_size(head_card, 280, is_fix ? 136 : 150);
     style_flat_box(head_card, COL_CARD, 12);
 
     lv_obj_t* lbl_obj_cap = lv_label_create(_head_cont);
-    lv_obj_set_pos(lbl_obj_cap, 56, 56);
+    lv_obj_set_pos(lbl_obj_cap, 56, top_y + 38);
     lv_obj_set_style_text_font(lbl_obj_cap, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_obj_cap, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(lbl_obj_cap, "TARGET");
 
     lv_obj_t* lbl_real_cap = lv_label_create(_head_cont);
-    lv_obj_set_pos(lbl_real_cap, 206, 56);
+    lv_obj_set_pos(lbl_real_cap, 206, top_y + 38);
     lv_obj_set_style_text_font(lbl_real_cap, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_real_cap, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(lbl_real_cap, "ACTUAL");
 
     _lbl_head_target = lv_label_create(_head_cont);
-    lv_obj_set_pos(_lbl_head_target, 64, 78);
+    lv_obj_set_pos(_lbl_head_target, 64, top_y + 56);
     lv_obj_set_style_text_font(_lbl_head_target, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_head_target, lv_color_hex(COL_YELLOW), 0);
 
     _lbl_head_real = lv_label_create(_head_cont);
-    lv_obj_set_pos(_lbl_head_real, 206, 78);
+    lv_obj_set_pos(_lbl_head_real, 206, top_y + 56);
     lv_obj_set_style_text_font(_lbl_head_real, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_head_real, lv_color_hex(COL_TEXT), 0);
 
     _btn_head_minus = lv_button_create(_head_cont);
-    lv_obj_set_pos(_btn_head_minus, 36, 126);
-    lv_obj_set_size(_btn_head_minus, 84, 54);
+    lv_obj_set_pos(_btn_head_minus, 36, top_y + 98);
+    lv_obj_set_size(_btn_head_minus, 84, 52);
     style_flat_box(_btn_head_minus, COL_CARD_HI, 10);
     lv_obj_t* lbl_minus = lv_label_create(_btn_head_minus);
     lv_obj_center(lbl_minus);
@@ -2512,8 +2466,8 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     _btn_head_plus = lv_button_create(_head_cont);
-    lv_obj_set_pos(_btn_head_plus, 200, 126);
-    lv_obj_set_size(_btn_head_plus, 84, 54);
+    lv_obj_set_pos(_btn_head_plus, 200, top_y + 98);
+    lv_obj_set_size(_btn_head_plus, 84, 52);
     style_flat_box(_btn_head_plus, COL_CARD_HI, 10);
     lv_obj_t* lbl_plus = lv_label_create(_btn_head_plus);
     lv_obj_center(lbl_plus);
@@ -2531,7 +2485,7 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     _btn_head_save = lv_button_create(_head_cont);
-    lv_obj_set_pos(_btn_head_save, 70, 196);
+    lv_obj_set_pos(_btn_head_save, 70, 198);
     lv_obj_set_size(_btn_head_save, 180, 34);
     style_flat_box(_btn_head_save, COL_PLAY_ON, 10);
     lv_obj_t* lbl_save = lv_label_create(_btn_head_save);
@@ -2557,7 +2511,7 @@ void AppMusicPlayer::build_ui()
     lv_obj_add_flag(_radio_cont, LV_OBJ_FLAG_HIDDEN);
 
     _lbl_radio_hdr = lv_label_create(_radio_cont);
-    lv_obj_set_pos(_lbl_radio_hdr, 10, 4);
+    lv_obj_set_pos(_lbl_radio_hdr, 10, sub_hdr_y);
     lv_obj_set_size(_lbl_radio_hdr, 150, 22);
     lv_obj_set_style_text_font(_lbl_radio_hdr, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_lbl_radio_hdr, lv_color_hex(COL_TEXT), 0);
@@ -2572,7 +2526,7 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     _lbl_radio_count = lv_label_create(_radio_cont);
-    lv_obj_set_pos(_lbl_radio_count, 160, 7);
+    lv_obj_set_pos(_lbl_radio_count, 160, sub_hdr_y + 3);
     lv_obj_set_width(_lbl_radio_count, 152);
     lv_obj_set_style_text_align(_lbl_radio_count, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(_lbl_radio_count, &lv_font_montserrat_12, 0);
@@ -2581,13 +2535,13 @@ void AppMusicPlayer::build_ui()
     for (int i = 0; i < PAGE_ROWS; ++i) {
         lv_obj_t* row  = lv_button_create(_radio_cont);
         _radio_rows[i] = row;
-        lv_obj_set_pos(row, 8, 28 + i * 29);
-        lv_obj_set_size(row, 304, 26);
+        lv_obj_set_pos(row, 8, row_y0 + i * row_step);
+        lv_obj_set_size(row, 304, row_h);
         style_flat_box(row, COL_CARD, 8);
 
         lv_obj_t* rlbl     = lv_label_create(row);
         _radio_row_lbls[i] = rlbl;
-        lv_obj_set_pos(rlbl, 10, 4);
+        lv_obj_set_pos(rlbl, 10, is_fix ? 2 : 4);
         lv_obj_set_width(rlbl, 284);
         lv_label_set_long_mode(rlbl, LV_LABEL_LONG_CLIP);
         lv_obj_set_style_text_font(rlbl, &lv_font_montserrat_16, 0);
@@ -2613,7 +2567,7 @@ void AppMusicPlayer::build_ui()
     }
 
     _lbl_radio_info = lv_label_create(_radio_cont);
-    lv_obj_set_pos(_lbl_radio_info, 8, 178);
+    lv_obj_set_pos(_lbl_radio_info, 8, list_info_y);
     lv_obj_set_width(_lbl_radio_info, 304);
     lv_label_set_long_mode(_lbl_radio_info, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_radio_info, &lv_font_montserrat_12, 0);
@@ -2684,7 +2638,7 @@ void AppMusicPlayer::build_ui()
     lv_obj_add_flag(_web_cont, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* lbl_web_hdr = lv_label_create(_web_cont);
-    lv_obj_set_pos(lbl_web_hdr, 10, 6);
+    lv_obj_set_pos(lbl_web_hdr, 10, sub_hdr_y + 2);
     lv_obj_set_size(lbl_web_hdr, 240, 22);
     lv_obj_set_style_text_font(lbl_web_hdr, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_web_hdr, lv_color_hex(COL_TEXT), 0);
@@ -2699,44 +2653,44 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     _web_qr_box = lv_obj_create(_web_cont);
-    lv_obj_set_pos(_web_qr_box, 12, 36);
-    lv_obj_set_size(_web_qr_box, 136, 136);
+    lv_obj_set_pos(_web_qr_box, 12, top_y + 26);
+    lv_obj_set_size(_web_qr_box, 126, 126);
     style_flat_box(_web_qr_box, COL_WHITE, 8);
     lv_obj_add_flag(_web_qr_box, LV_OBJ_FLAG_HIDDEN);
 
     _web_qr = lv_qrcode_create(_web_qr_box);
-    lv_qrcode_set_size(_web_qr, 124);
+    lv_qrcode_set_size(_web_qr, 114);
     lv_qrcode_set_dark_color(_web_qr, lv_color_hex(0x000000));
     lv_qrcode_set_light_color(_web_qr, lv_color_hex(0xFFFFFF));
     lv_obj_center(_web_qr);
 
     _lbl_web_status = lv_label_create(_web_cont);
-    lv_obj_set_pos(_lbl_web_status, 158, 38);
-    lv_obj_set_width(_lbl_web_status, 154);
+    lv_obj_set_pos(_lbl_web_status, 150, top_y + 28);
+    lv_obj_set_width(_lbl_web_status, 162);
     lv_label_set_long_mode(_lbl_web_status, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(_lbl_web_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_web_status, lv_color_hex(COL_YELLOW), 0);
     lv_label_set_text(_lbl_web_status, "Starting Wi-Fi...");
 
     _lbl_web_url = lv_label_create(_web_cont);
-    lv_obj_set_pos(_lbl_web_url, 158, 66);
-    lv_obj_set_width(_lbl_web_url, 154);
+    lv_obj_set_pos(_lbl_web_url, 150, top_y + 54);
+    lv_obj_set_width(_lbl_web_url, 162);
     lv_label_set_long_mode(_lbl_web_url, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(_lbl_web_url, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_web_url, lv_color_hex(COL_WHITE), 0);
     lv_label_set_text(_lbl_web_url, "");
 
     _lbl_web_hint = lv_label_create(_web_cont);
-    lv_obj_set_pos(_lbl_web_hint, 158, 96);
-    lv_obj_set_width(_lbl_web_hint, 154);
+    lv_obj_set_pos(_lbl_web_hint, 150, top_y + 82);
+    lv_obj_set_width(_lbl_web_hint, 162);
     lv_label_set_long_mode(_lbl_web_hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(_lbl_web_hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_web_hint, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(_lbl_web_hint, "Scan QR on same Wi-Fi to browse, play radio, or upload MP3s.");
 
     lv_obj_t* btn_web_back = lv_button_create(_web_cont);
-    lv_obj_set_pos(btn_web_back, 16, 186);
-    lv_obj_set_size(btn_web_back, 288, 40);
+    lv_obj_set_pos(btn_web_back, 16, 192);
+    lv_obj_set_size(btn_web_back, 288, 38);
     style_flat_box(btn_web_back, COL_PLAY_ON, 10);
     lv_obj_t* lbl_web_back = lv_label_create(btn_web_back);
     lv_obj_center(lbl_web_back);
@@ -3008,7 +2962,7 @@ void AppMusicPlayer::refresh_main_ui(uint32_t now)
                                 ? stations[_radio_index].name
                                 : "Internet Radio";
         lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_YELLOW), 0);
-        lv_label_set_text(_lbl_title, clip_text(sname, 20).c_str());
+        lv_label_set_text(_lbl_title, clip_text(sname, 28).c_str());
 
         char rnum[32];
         std::snprintf(rnum, sizeof(rnum), "FM %d/%d", _radio_index + 1, std::max(1, static_cast<int>(stations.size())));
@@ -3023,7 +2977,7 @@ void AppMusicPlayer::refresh_main_ui(uint32_t now)
         if (!_tracks.empty()) {
             lv_obj_set_style_text_color(_lbl_title, lv_color_hex(COL_TEXT), 0);
             std::string cur_title(_tracks[_index].title.c_str(), _tracks[_index].title.size());
-            lv_label_set_text(_lbl_title, clip_text(cur_title, 20).c_str());
+            lv_label_set_text(_lbl_title, clip_text(cur_title, 28).c_str());
 
             char tnum[32];
             std::snprintf(tnum, sizeof(tnum), "%d/%d", _index + 1, static_cast<int>(_tracks.size()));

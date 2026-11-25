@@ -6,6 +6,7 @@
 #include "workers.h"
 #include <stackchan/stackchan.h>
 #include <stackchan/avatar/skins/default/default.h>
+#include <apps/common/status_bar/status_bar.h>
 #include <apps/common/toast/toast.h>
 #include <mooncake_log.h>
 #include <assets/assets.h>
@@ -393,5 +394,83 @@ void AvatarStyleWorker::refresh_buttons()
 }
 
 void AvatarStyleWorker::update()
+{
+}
+
+StatusBarModeWorker::StatusBarModeWorker()
+{
+    _use_fixed = (view::get_status_bar_mode() == view::StatusBarMode::Fixed);
+
+    _panel = std::make_unique<Container>(lv_screen_active());
+    _panel->setBgColor(lv_color_hex(0xEDF4FF));
+    _panel->align(LV_ALIGN_CENTER, 0, 0);
+    _panel->setBorderWidth(0);
+    _panel->setSize(320, 240);
+    _panel->setRadius(0);
+    _panel->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
+
+    _label_title = std::make_unique<Label>(*_panel);
+    _label_title->setText("Status Bar");
+    _label_title->setTextFont(&lv_font_montserrat_24);
+    _label_title->setTextColor(lv_color_hex(0x26206A));
+    _label_title->align(LV_ALIGN_CENTER, 0, -76);
+
+    _label_hint = std::make_unique<Label>(*_panel);
+    _label_hint->setText("Top bar with Wi-Fi, Time, Battery & Home");
+    _label_hint->setTextFont(&lv_font_montserrat_14);
+    _label_hint->setTextColor(lv_color_hex(0x5A558F));
+    _label_hint->align(LV_ALIGN_CENTER, 0, -48);
+
+    _btn_fixed = std::make_unique<Button>(*_panel);
+    apply_button_common_style(*_btn_fixed);
+    _btn_fixed->align(LV_ALIGN_CENTER, -72, 2);
+    _btn_fixed->setSize(132, 54);
+    _btn_fixed->label().setTextFont(&lv_font_montserrat_20);
+    _btn_fixed->label().setText("Fixed");
+    _btn_fixed->onClick().connect([this]() {
+        _use_fixed = true;
+        refresh_buttons();
+    });
+
+    _btn_autohide = std::make_unique<Button>(*_panel);
+    apply_button_common_style(*_btn_autohide);
+    _btn_autohide->align(LV_ALIGN_CENTER, 72, 2);
+    _btn_autohide->setSize(132, 54);
+    _btn_autohide->label().setTextFont(&lv_font_montserrat_20);
+    _btn_autohide->label().setText("Auto-hide");
+    _btn_autohide->onClick().connect([this]() {
+        _use_fixed = false;
+        refresh_buttons();
+    });
+
+    _btn_confirm = std::make_unique<Button>(*_panel);
+    apply_button_common_style(*_btn_confirm);
+    _btn_confirm->align(LV_ALIGN_CENTER, 0, 72);
+    _btn_confirm->setSize(150, 48);
+    _btn_confirm->label().setTextFont(&lv_font_montserrat_20);
+    _btn_confirm->label().setText("Confirm");
+    _btn_confirm->onClick().connect([this]() {
+        view::set_status_bar_mode(_use_fixed ? view::StatusBarMode::Fixed : view::StatusBarMode::AutoHide);
+        view::destroy_status_bar();
+        view::create_status_bar();
+        _is_done = true;
+    });
+
+    refresh_buttons();
+}
+
+void StatusBarModeWorker::refresh_buttons()
+{
+    if (_btn_fixed) {
+        _btn_fixed->setBgColor(lv_color_hex(_use_fixed ? 0x615B9E : 0xB8D3FD));
+        _btn_fixed->label().setTextColor(lv_color_hex(_use_fixed ? 0xFFFFFF : 0x26206A));
+    }
+    if (_btn_autohide) {
+        _btn_autohide->setBgColor(lv_color_hex(_use_fixed ? 0xB8D3FD : 0x615B9E));
+        _btn_autohide->label().setTextColor(lv_color_hex(_use_fixed ? 0x26206A : 0xFFFFFF));
+    }
+}
+
+void StatusBarModeWorker::update()
 {
 }

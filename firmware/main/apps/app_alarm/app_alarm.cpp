@@ -976,30 +976,28 @@ void AppAlarm::build_ui()
         return b;
     };
 
+    const int top_y      = view::get_status_bar_top_offset();
+    const bool is_fix    = (top_y > 0);
+    const int sub_btn_y  = top_y + (is_fix ? 3 : 5);
+    const int sub_btn_h  = is_fix ? 28 : 30;
+    const int sub_lbl_y  = top_y + (is_fix ? 8 : 10);
+    const int sub_body_y = top_y + (is_fix ? 35 : 40);
+
     /* ======================== 1. CLOCK SCREEN ======================== */
     _scr_clock = lv_obj_create(_root);
     lv_obj_set_size(_scr_clock, W, H);
     lv_obj_set_pos(_scr_clock, 0, 0);
     style_box(_scr_clock, COL_BG, 0);
 
-    _lbl_hdr = lv_label_create(_scr_clock);
-    lv_obj_set_pos(_lbl_hdr, 10, 5);
-    lv_obj_set_size(_lbl_hdr, 236, 18);
-    lv_obj_set_style_text_font(_lbl_hdr, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_lbl_hdr, lv_color_hex(COL_AMBER), 0);
-    lv_label_set_text(_lbl_hdr, LV_SYMBOL_BELL " ALARM CLOCK");
-
-    _lbl_batt = lv_label_create(_scr_clock);
-    lv_obj_set_pos(_lbl_batt, 250, 6);
-    lv_obj_set_width(_lbl_batt, 62);
-    lv_obj_set_style_text_align(_lbl_batt, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_style_text_font(_lbl_batt, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(_lbl_batt, lv_color_hex(COL_DIM), 0);
+    _lbl_hdr  = nullptr;
+    _lbl_batt = nullptr;
 
     // Unified center stage with clock + centered avatar + next alarm badge
+    const int clock_stage_y = is_fix ? (top_y + 4) : 10;
+    const int clock_stage_h = 180 - clock_stage_y;
     _stage = lv_obj_create(_scr_clock);
-    lv_obj_set_pos(_stage, 8, 26);
-    lv_obj_set_size(_stage, 304, 152);
+    lv_obj_set_pos(_stage, 8, clock_stage_y);
+    lv_obj_set_size(_stage, 304, clock_stage_h);
     style_box(_stage, COL_CARD, 14);
     lv_obj_set_style_border_width(_stage, 1, 0);
     lv_obj_set_style_border_color(_stage, lv_color_hex(COL_CARD_HI), 0);
@@ -1015,19 +1013,19 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     _lbl_time = lv_label_create(_stage);
-    lv_obj_set_pos(_lbl_time, 14, 28);
+    lv_obj_set_pos(_lbl_time, 14, 24);
     lv_obj_set_style_text_font(_lbl_time, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_time, lv_color_hex(COL_WHITE), 0);
     lv_label_set_text(_lbl_time, "--:--");
 
     _lbl_sec = lv_label_create(_stage);
-    lv_obj_set_pos(_lbl_sec, 90, 36);
+    lv_obj_set_pos(_lbl_sec, 90, 32);
     lv_obj_set_style_text_font(_lbl_sec, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_sec, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(_lbl_sec, ":00");
 
     _lbl_date = lv_label_create(_stage);
-    lv_obj_set_pos(_lbl_date, 14, 62);
+    lv_obj_set_pos(_lbl_date, 14, 58);
     lv_obj_set_style_text_font(_lbl_date, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_date, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(_lbl_date, "---");
@@ -1086,8 +1084,8 @@ void AppAlarm::build_ui()
     lv_obj_set_style_text_color(_lbl_next, lv_color_hex(COL_AMBER), 0);
     lv_label_set_text(_lbl_next, "No active alarms");
 
-    // Bottom 5-button bar: ALARMS | TIMER | NIGHT | SET | EXIT
-    lv_obj_t* btn_alarms = make_btn(_scr_clock, 8, 186, 82, 44, LV_SYMBOL_BELL " ALARMS", COL_TEAL_DK, COL_WHITE);
+    // Bottom 4-button bar: ALARMS | TIMER | NIGHT | SET (Exit is in the top status bar)
+    lv_obj_t* btn_alarms = make_btn(_scr_clock, 8, 186, 88, 44, LV_SYMBOL_BELL " ALARMS", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         btn_alarms,
         [](lv_event_t* e) {
@@ -1095,7 +1093,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_timer = make_btn(_scr_clock, 94, 186, 62, 44, "TIMER", COL_CARD, COL_AMBER);
+    lv_obj_t* btn_timer = make_btn(_scr_clock, 102, 186, 72, 44, "TIMER", COL_CARD, COL_AMBER);
     lv_obj_add_event_cb(
         btn_timer,
         [](lv_event_t* e) {
@@ -1103,7 +1101,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_night = make_btn(_scr_clock, 160, 186, 52, 44, "NIGHT", COL_CARD, COL_TEXT);
+    _btn_night = make_btn(_scr_clock, 180, 186, 66, 44, "NIGHT", COL_CARD, COL_TEXT);
     _lbl_night = lv_obj_get_child(_btn_night, 0);
     lv_obj_add_event_cb(
         _btn_night,
@@ -1112,19 +1110,11 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_set = make_btn(_scr_clock, 216, 186, 48, 44, "SET", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_set = make_btn(_scr_clock, 252, 186, 60, 44, LV_SYMBOL_SETTINGS " SET", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_set,
         [](lv_event_t* e) {
             static_cast<AppAlarm*>(lv_event_get_user_data(e))->open_screen(Screen::Settings);
-        },
-        LV_EVENT_CLICKED, this);
-
-    lv_obj_t* btn_exit = make_btn(_scr_clock, 268, 186, 44, 44, "EXIT", COL_CARD_HI, COL_YELLOW);
-    lv_obj_add_event_cb(
-        btn_exit,
-        [](lv_event_t* e) {
-            static_cast<AppAlarm*>(lv_event_get_user_data(e))->close();
         },
         LV_EVENT_CLICKED, this);
 
@@ -1136,12 +1126,12 @@ void AppAlarm::build_ui()
     lv_obj_add_flag(_scr_list, LV_OBJ_FLAG_HIDDEN);
 
     _lbl_list_title = lv_label_create(_scr_list);
-    lv_obj_set_pos(_lbl_list_title, 10, 10);
+    lv_obj_set_pos(_lbl_list_title, 10, sub_lbl_y);
     lv_obj_set_style_text_font(_lbl_list_title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_list_title, lv_color_hex(COL_AMBER), 0);
     lv_label_set_text(_lbl_list_title, "ALARMS");
 
-    _btn_add_alarm = make_btn(_scr_list, 168, 5, 68, 30, LV_SYMBOL_PLUS " NEW", COL_TEAL_DK, COL_WHITE);
+    _btn_add_alarm = make_btn(_scr_list, 168, sub_btn_y, 68, sub_btn_h, LV_SYMBOL_PLUS " NEW", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         _btn_add_alarm,
         [](lv_event_t* e) {
@@ -1149,7 +1139,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_list_back = make_btn(_scr_list, 242, 5, 70, 30, LV_SYMBOL_LEFT " BACK", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* btn_list_back = make_btn(_scr_list, 242, sub_btn_y, 70, sub_btn_h, LV_SYMBOL_LEFT " BACK", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_list_back,
         [](lv_event_t* e) {
@@ -1158,8 +1148,8 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     _list_box = lv_obj_create(_scr_list);
-    lv_obj_set_pos(_list_box, 8, 40);
-    lv_obj_set_size(_list_box, 304, 194);
+    lv_obj_set_pos(_list_box, 8, sub_body_y);
+    lv_obj_set_size(_list_box, 304, 236 - sub_body_y);
     lv_obj_set_style_bg_opa(_list_box, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_list_box, 0, 0);
     lv_obj_set_style_pad_all(_list_box, 0, 0);
@@ -1175,12 +1165,12 @@ void AppAlarm::build_ui()
     lv_obj_add_flag(_scr_edit, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* lbl_ed = lv_label_create(_scr_edit);
-    lv_obj_set_pos(lbl_ed, 10, 10);
+    lv_obj_set_pos(lbl_ed, 10, sub_lbl_y);
     lv_obj_set_style_text_font(lbl_ed, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_ed, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(lbl_ed, "EDIT ALARM");
 
-    _btn_edit_del = make_btn(_scr_edit, 174, 5, 62, 30, "DEL", COL_RED, COL_WHITE);
+    _btn_edit_del = make_btn(_scr_edit, 174, sub_btn_y, 62, sub_btn_h, "DEL", COL_RED, COL_WHITE);
     lv_obj_add_event_cb(
         _btn_edit_del,
         [](lv_event_t* e) {
@@ -1188,7 +1178,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_ed_save = make_btn(_scr_edit, 242, 5, 70, 30, LV_SYMBOL_OK " SAVE", COL_GREEN, COL_BG);
+    lv_obj_t* btn_ed_save = make_btn(_scr_edit, 242, sub_btn_y, 70, sub_btn_h, LV_SYMBOL_OK " SAVE", COL_GREEN, COL_BG);
     lv_obj_add_event_cb(
         btn_ed_save,
         [](lv_event_t* e) {
@@ -1197,9 +1187,21 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Row 1: Hour & Minute tactile steppers
+    const int ed_card_y = is_fix ? 62 : 40;
+    const int ed_card_h = is_fix ? 46 : 52;
+    const int ed_btn_y  = is_fix ? 5 : 7;
+    const int ed_btn_h  = is_fix ? 36 : 38;
+    const int ed_lbl_y  = is_fix ? 9 : 12;
+    const int ed_day_y  = is_fix ? 112 : 98;
+    const int ed_day_h  = is_fix ? 32 : 36;
+    const int ed_tag_y  = is_fix ? 148 : 140;
+    const int ed_tag_h  = is_fix ? 34 : 38;
+    const int ed_foot_y = is_fix ? 188 : 186;
+    const int ed_foot_h = is_fix ? 44 : 44;
+
     lv_obj_t* time_card = lv_obj_create(_scr_edit);
-    lv_obj_set_pos(time_card, 8, 40);
-    lv_obj_set_size(time_card, 304, 52);
+    lv_obj_set_pos(time_card, 8, ed_card_y);
+    lv_obj_set_size(time_card, 304, ed_card_h);
     style_box(time_card, COL_CARD, 10);
 
     auto wire_time_btn = [&](lv_obj_t* btn, int dh, int dm) {
@@ -1219,34 +1221,34 @@ void AppAlarm::build_ui()
         lv_obj_add_event_cb(btn, cb, LV_EVENT_LONG_PRESSED_REPEAT, this);
     };
 
-    wire_time_btn(make_btn(time_card, 8, 7, 40, 38, "-", COL_CARD_HI, COL_WHITE), -1, 0);
+    wire_time_btn(make_btn(time_card, 8, ed_btn_y, 40, ed_btn_h, "-", COL_CARD_HI, COL_WHITE), -1, 0);
     _lbl_edit_hour = lv_label_create(time_card);
-    lv_obj_set_pos(_lbl_edit_hour, 50, 12);
+    lv_obj_set_pos(_lbl_edit_hour, 50, ed_lbl_y);
     lv_obj_set_width(_lbl_edit_hour, 44);
     lv_obj_set_style_text_align(_lbl_edit_hour, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_lbl_edit_hour, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_edit_hour, lv_color_hex(COL_WHITE), 0);
-    wire_time_btn(make_btn(time_card, 96, 7, 40, 38, "+", COL_CARD_HI, COL_WHITE), +1, 0);
+    wire_time_btn(make_btn(time_card, 96, ed_btn_y, 40, ed_btn_h, "+", COL_CARD_HI, COL_WHITE), +1, 0);
 
     lv_obj_t* lbl_colon = lv_label_create(time_card);
-    lv_obj_set_pos(lbl_colon, 144, 11);
+    lv_obj_set_pos(lbl_colon, 144, ed_lbl_y - 1);
     lv_obj_set_style_text_font(lbl_colon, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_colon, lv_color_hex(COL_AMBER), 0);
     lv_label_set_text(lbl_colon, ":");
 
-    wire_time_btn(make_btn(time_card, 166, 7, 40, 38, "-", COL_CARD_HI, COL_WHITE), 0, -1);
+    wire_time_btn(make_btn(time_card, 166, ed_btn_y, 40, ed_btn_h, "-", COL_CARD_HI, COL_WHITE), 0, -1);
     _lbl_edit_min = lv_label_create(time_card);
-    lv_obj_set_pos(_lbl_edit_min, 208, 12);
+    lv_obj_set_pos(_lbl_edit_min, 208, ed_lbl_y);
     lv_obj_set_width(_lbl_edit_min, 44);
     lv_obj_set_style_text_align(_lbl_edit_min, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_lbl_edit_min, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_edit_min, lv_color_hex(COL_WHITE), 0);
-    wire_time_btn(make_btn(time_card, 254, 7, 40, 38, "+", COL_CARD_HI, COL_WHITE), 0, +1);
+    wire_time_btn(make_btn(time_card, 254, ed_btn_y, 40, ed_btn_h, "+", COL_CARD_HI, COL_WHITE), 0, +1);
 
     // Row 2: 7 Weekday toggle pills (S M T W T F S)
     static const char* const DAY_CH[7] = {"S", "M", "T", "W", "T", "F", "S"};
     for (int i = 0; i < 7; ++i) {
-        _btn_edit_day[i] = make_btn(_scr_edit, 8 + i * 44, 98, 40, 36, DAY_CH[i], COL_CARD, COL_WHITE);
+        _btn_edit_day[i] = make_btn(_scr_edit, 8 + i * 44, ed_day_y, 40, ed_day_h, DAY_CH[i], COL_CARD, COL_WHITE);
         lv_obj_set_user_data(_btn_edit_day[i], reinterpret_cast<void*>(static_cast<intptr_t>(i)));
         lv_obj_add_event_cb(
             _btn_edit_day[i],
@@ -1261,7 +1263,7 @@ void AppAlarm::build_ui()
     }
 
     // Row 3: Label & Tone cycle pills
-    lv_obj_t* btn_lbl = make_btn(_scr_edit, 8, 140, 148, 38, "Wake Up", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_lbl = make_btn(_scr_edit, 8, ed_tag_y, 148, ed_tag_h, "Wake Up", COL_CARD, COL_TEXT);
     _lbl_edit_label   = lv_obj_get_child(btn_lbl, 0);
     lv_obj_add_event_cb(
         btn_lbl,
@@ -1272,7 +1274,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_tone = make_btn(_scr_edit, 164, 140, 148, 38, "Tone: Chime", COL_CARD, COL_AMBER);
+    lv_obj_t* btn_tone = make_btn(_scr_edit, 164, ed_tag_y, 148, ed_tag_h, "Tone: Chime", COL_CARD, COL_AMBER);
     _lbl_edit_tone     = lv_obj_get_child(btn_tone, 0);
     lv_obj_add_event_cb(
         btn_tone,
@@ -1284,7 +1286,7 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Row 4: TEST | SD MP3 | CANCEL
-    lv_obj_t* btn_test = make_btn(_scr_edit, 8, 186, 98, 44, LV_SYMBOL_AUDIO " TEST", COL_BLUE, COL_WHITE);
+    lv_obj_t* btn_test = make_btn(_scr_edit, 8, ed_foot_y, 98, ed_foot_h, LV_SYMBOL_AUDIO " TEST", COL_BLUE, COL_WHITE);
     lv_obj_add_event_cb(
         btn_test,
         [](lv_event_t* e) {
@@ -1297,7 +1299,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_edit_mp3 = make_btn(_scr_edit, 112, 186, 102, 44, LV_SYMBOL_SD_CARD " SD MP3", COL_TEAL_DK, COL_WHITE);
+    _btn_edit_mp3 = make_btn(_scr_edit, 112, ed_foot_y, 102, ed_foot_h, LV_SYMBOL_SD_CARD " SD MP3", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         _btn_edit_mp3,
         [](lv_event_t* e) {
@@ -1306,7 +1308,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_cancel = make_btn(_scr_edit, 220, 186, 92, 44, "CANCEL", COL_CARD_HI, COL_TEXT);
+    lv_obj_t* btn_cancel = make_btn(_scr_edit, 220, ed_foot_y, 92, ed_foot_h, "CANCEL", COL_CARD_HI, COL_TEXT);
     lv_obj_add_event_cb(
         btn_cancel,
         [](lv_event_t* e) {
@@ -1322,12 +1324,12 @@ void AppAlarm::build_ui()
     lv_obj_add_flag(_scr_sd, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* lbl_sd = lv_label_create(_scr_sd);
-    lv_obj_set_pos(lbl_sd, 10, 10);
+    lv_obj_set_pos(lbl_sd, 10, sub_lbl_y);
     lv_obj_set_style_text_font(lbl_sd, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_sd, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(lbl_sd, LV_SYMBOL_SD_CARD " SELECT MP3");
 
-    lv_obj_t* btn_sd_back = make_btn(_scr_sd, 242, 5, 70, 30, LV_SYMBOL_LEFT " BACK", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* btn_sd_back = make_btn(_scr_sd, 242, sub_btn_y, 70, sub_btn_h, LV_SYMBOL_LEFT " BACK", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_sd_back,
         [](lv_event_t* e) {
@@ -1336,8 +1338,8 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     _sd_list_box = lv_obj_create(_scr_sd);
-    lv_obj_set_pos(_sd_list_box, 8, 40);
-    lv_obj_set_size(_sd_list_box, 304, 194);
+    lv_obj_set_pos(_sd_list_box, 8, sub_body_y);
+    lv_obj_set_size(_sd_list_box, 304, 236 - sub_body_y);
     lv_obj_set_style_bg_opa(_sd_list_box, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_sd_list_box, 0, 0);
     lv_obj_set_style_pad_all(_sd_list_box, 0, 0);
@@ -1352,7 +1354,7 @@ void AppAlarm::build_ui()
     style_box(_scr_timer, COL_BG, 0);
     lv_obj_add_flag(_scr_timer, LV_OBJ_FLAG_HIDDEN);
 
-    _btn_tab_tmr = make_btn(_scr_timer, 8, 5, 108, 30, "TIMER", COL_TEAL_DK, COL_WHITE);
+    _btn_tab_tmr = make_btn(_scr_timer, 8, sub_btn_y, 108, sub_btn_h, "TIMER", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         _btn_tab_tmr,
         [](lv_event_t* e) {
@@ -1362,7 +1364,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_tab_sw = make_btn(_scr_timer, 122, 5, 114, 30, "STOPWATCH", COL_CARD, COL_TEXT);
+    _btn_tab_sw = make_btn(_scr_timer, 122, sub_btn_y, 114, sub_btn_h, "STOPWATCH", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         _btn_tab_sw,
         [](lv_event_t* e) {
@@ -1372,7 +1374,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_tmr_back = make_btn(_scr_timer, 242, 5, 70, 30, LV_SYMBOL_LEFT " BACK", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* btn_tmr_back = make_btn(_scr_timer, 242, sub_btn_y, 70, sub_btn_h, LV_SYMBOL_LEFT " BACK", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_tmr_back,
         [](lv_event_t* e) {
@@ -1381,30 +1383,37 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Countdown Timer pane
+    const int tmr_card_h = is_fix ? 74 : 88;
+    const int tmr_adj_y  = is_fix ? 82 : 98;
+    const int tmr_adj_h  = is_fix ? 34 : 38;
+    const int tmr_act_y  = is_fix ? 122 : 144;
+    const int tmr_act_h  = is_fix ? 42 : 46;
+    const int sw_card_h  = is_fix ? 114 : 134;
+
     _box_timer = lv_obj_create(_scr_timer);
-    lv_obj_set_pos(_box_timer, 0, 40);
-    lv_obj_set_size(_box_timer, W, 200);
+    lv_obj_set_pos(_box_timer, 0, sub_body_y);
+    lv_obj_set_size(_box_timer, W, 240 - sub_body_y);
     style_box(_box_timer, COL_BG, 0);
 
     lv_obj_t* tmr_card = lv_obj_create(_box_timer);
     lv_obj_set_pos(tmr_card, 8, 2);
-    lv_obj_set_size(tmr_card, 304, 88);
+    lv_obj_set_size(tmr_card, 304, tmr_card_h);
     style_box(tmr_card, COL_CARD, 12);
 
     _lbl_tmr_time = lv_label_create(tmr_card);
-    lv_obj_align(_lbl_tmr_time, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_align(_lbl_tmr_time, LV_ALIGN_CENTER, 0, -8);
     lv_obj_set_style_text_font(_lbl_tmr_time, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_tmr_time, lv_color_hex(COL_WHITE), 0);
     lv_label_set_text(_lbl_tmr_time, "05:00");
 
     _lbl_tmr_state = lv_label_create(tmr_card);
-    lv_obj_align(_lbl_tmr_state, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(_lbl_tmr_state, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_obj_set_style_text_font(_lbl_tmr_state, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_tmr_state, lv_color_hex(COL_AMBER), 0);
     lv_label_set_text(_lbl_tmr_state, "Ready (runs in background)");
 
     auto make_tmr_adj = [&](int x, const char* txt, int delta_sec) {
-        lv_obj_t* b = make_btn(_box_timer, x, 98, 71, 38, txt, COL_CARD_HI, COL_WHITE);
+        lv_obj_t* b = make_btn(_box_timer, x, tmr_adj_y, 71, tmr_adj_h, txt, COL_CARD_HI, COL_WHITE);
         lv_obj_set_user_data(b, reinterpret_cast<void*>(static_cast<intptr_t>(delta_sec)));
         lv_obj_add_event_cb(
             b,
@@ -1429,7 +1438,7 @@ void AppAlarm::build_ui()
     make_tmr_adj(162, "+5m", +300);
     make_tmr_adj(240, "+10m", +600);
 
-    _btn_tmr_toggle = make_btn(_box_timer, 8, 144, 194, 46, LV_SYMBOL_PLAY " START", COL_GREEN, COL_BG);
+    _btn_tmr_toggle = make_btn(_box_timer, 8, tmr_act_y, 194, tmr_act_h, LV_SYMBOL_PLAY " START", COL_GREEN, COL_BG);
     _lbl_tmr_toggle = lv_obj_get_child(_btn_tmr_toggle, 0);
     lv_obj_add_event_cb(
         _btn_tmr_toggle,
@@ -1446,7 +1455,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_tmr_rst = make_btn(_box_timer, 210, 144, 102, 46, "RESET", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_tmr_rst = make_btn(_box_timer, 210, tmr_act_y, 102, tmr_act_h, "RESET", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_tmr_rst,
         [](lv_event_t* e) {
@@ -1459,29 +1468,29 @@ void AppAlarm::build_ui()
 
     // Stopwatch pane
     _box_sw = lv_obj_create(_scr_timer);
-    lv_obj_set_pos(_box_sw, 0, 40);
-    lv_obj_set_size(_box_sw, W, 200);
+    lv_obj_set_pos(_box_sw, 0, sub_body_y);
+    lv_obj_set_size(_box_sw, W, 240 - sub_body_y);
     style_box(_box_sw, COL_BG, 0);
     lv_obj_add_flag(_box_sw, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* sw_card = lv_obj_create(_box_sw);
     lv_obj_set_pos(sw_card, 8, 2);
-    lv_obj_set_size(sw_card, 304, 134);
+    lv_obj_set_size(sw_card, 304, sw_card_h);
     style_box(sw_card, COL_CARD, 12);
 
     _lbl_sw_time = lv_label_create(sw_card);
-    lv_obj_align(_lbl_sw_time, LV_ALIGN_CENTER, 0, -16);
+    lv_obj_align(_lbl_sw_time, LV_ALIGN_CENTER, 0, -14);
     lv_obj_set_style_text_font(_lbl_sw_time, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_sw_time, lv_color_hex(COL_WHITE), 0);
     lv_label_set_text(_lbl_sw_time, "00:00.0");
 
     _lbl_sw_lap = lv_label_create(sw_card);
-    lv_obj_align(_lbl_sw_lap, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_align(_lbl_sw_lap, LV_ALIGN_BOTTOM_MID, 0, -12);
     lv_obj_set_style_text_font(_lbl_sw_lap, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_sw_lap, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(_lbl_sw_lap, "Tap LAP to record split");
 
-    _btn_sw_toggle = make_btn(_box_sw, 8, 144, 134, 46, LV_SYMBOL_PLAY " START", COL_GREEN, COL_BG);
+    _btn_sw_toggle = make_btn(_box_sw, 8, tmr_act_y, 134, tmr_act_h, LV_SYMBOL_PLAY " START", COL_GREEN, COL_BG);
     _lbl_sw_toggle = lv_obj_get_child(_btn_sw_toggle, 0);
     lv_obj_add_event_cb(
         _btn_sw_toggle,
@@ -1499,7 +1508,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_sw_lap = make_btn(_box_sw, 148, 144, 80, 46, "LAP", COL_BLUE, COL_WHITE);
+    lv_obj_t* btn_sw_lap = make_btn(_box_sw, 148, tmr_act_y, 80, tmr_act_h, "LAP", COL_BLUE, COL_WHITE);
     lv_obj_add_event_cb(
         btn_sw_lap,
         [](lv_event_t* e) {
@@ -1514,7 +1523,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_sw_rst = make_btn(_box_sw, 234, 144, 78, 46, "RESET", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_sw_rst = make_btn(_box_sw, 234, tmr_act_y, 78, tmr_act_h, "RESET", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_sw_rst,
         [](lv_event_t* e) {
@@ -1535,12 +1544,12 @@ void AppAlarm::build_ui()
     lv_obj_add_flag(_scr_settings, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* lbl_st = lv_label_create(_scr_settings);
-    lv_obj_set_pos(lbl_st, 10, 10);
+    lv_obj_set_pos(lbl_st, 10, sub_lbl_y);
     lv_obj_set_style_text_font(lbl_st, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_st, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(lbl_st, LV_SYMBOL_SETTINGS " ALARM SETTINGS");
 
-    lv_obj_t* btn_st_back = make_btn(_scr_settings, 242, 5, 70, 30, LV_SYMBOL_LEFT " BACK", COL_TEAL_DK, COL_WHITE);
+    lv_obj_t* btn_st_back = make_btn(_scr_settings, 242, sub_btn_y, 70, sub_btn_h, LV_SYMBOL_LEFT " BACK", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         btn_st_back,
         [](lv_event_t* e) {
@@ -1548,13 +1557,23 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
+    const int set_row_h   = is_fix ? 46 : 52;
+    const int set_row1_y  = is_fix ? 64 : 42;
+    const int set_row2_y  = is_fix ? 116 : 100;
+    const int set_btn_ry  = is_fix ? 5 : 7;
+    const int set_btn_rh  = is_fix ? 36 : 38;
+    const int set_lbl_ry  = is_fix ? 14 : 17;
+    const int set_act_y   = is_fix ? 168 : 160;
+    const int set_act_h   = is_fix ? 38 : 42;
+    const int set_sync_y  = is_fix ? 212 : 210;
+
     auto make_set_row = [&](int y, const char* title) {
         lv_obj_t* c = lv_obj_create(_scr_settings);
         lv_obj_set_pos(c, 8, y);
-        lv_obj_set_size(c, 304, 52);
+        lv_obj_set_size(c, 304, set_row_h);
         style_box(c, COL_CARD, 10);
         lv_obj_t* l = lv_label_create(c);
-        lv_obj_set_pos(l, 12, 18);
+        lv_obj_set_pos(l, 12, set_lbl_ry + 1);
         lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(l, lv_color_hex(COL_TEXT), 0);
         lv_label_set_text(l, title);
@@ -1562,8 +1581,8 @@ void AppAlarm::build_ui()
     };
 
     // Snooze duration
-    lv_obj_t* row_sn = make_set_row(42, "SNOOZE");
-    lv_obj_t* btn_sm = make_btn(row_sn, 118, 7, 46, 38, "-", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* row_sn = make_set_row(set_row1_y, "SNOOZE");
+    lv_obj_t* btn_sm = make_btn(row_sn, 118, set_btn_ry, 46, set_btn_rh, "-", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_sm,
         [](lv_event_t* e) {
@@ -1573,12 +1592,12 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
     _lbl_set_snooze = lv_label_create(row_sn);
-    lv_obj_set_pos(_lbl_set_snooze, 166, 17);
+    lv_obj_set_pos(_lbl_set_snooze, 166, set_lbl_ry);
     lv_obj_set_width(_lbl_set_snooze, 76);
     lv_obj_set_style_text_align(_lbl_set_snooze, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_lbl_set_snooze, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_set_snooze, lv_color_hex(COL_WHITE), 0);
-    lv_obj_t* btn_sp = make_btn(row_sn, 246, 7, 46, 38, "+", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* btn_sp = make_btn(row_sn, 246, set_btn_ry, 46, set_btn_rh, "+", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_sp,
         [](lv_event_t* e) {
@@ -1589,8 +1608,8 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Alarm max volume
-    lv_obj_t* row_vl = make_set_row(100, "VOLUME");
-    lv_obj_t* btn_vm = make_btn(row_vl, 118, 7, 46, 38, "-", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* row_vl = make_set_row(set_row2_y, "VOLUME");
+    lv_obj_t* btn_vm = make_btn(row_vl, 118, set_btn_ry, 46, set_btn_rh, "-", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_vm,
         [](lv_event_t* e) {
@@ -1602,12 +1621,12 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
     _lbl_set_vol = lv_label_create(row_vl);
-    lv_obj_set_pos(_lbl_set_vol, 166, 17);
+    lv_obj_set_pos(_lbl_set_vol, 166, set_lbl_ry);
     lv_obj_set_width(_lbl_set_vol, 76);
     lv_obj_set_style_text_align(_lbl_set_vol, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_lbl_set_vol, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_set_vol, lv_color_hex(COL_WHITE), 0);
-    lv_obj_t* btn_vp = make_btn(row_vl, 246, 7, 46, 38, "+", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* btn_vp = make_btn(row_vl, 246, set_btn_ry, 46, set_btn_rh, "+", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_vp,
         [](lv_event_t* e) {
@@ -1620,7 +1639,7 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     // NTP Sync + Demo Ring
-    lv_obj_t* btn_sync = make_btn(_scr_settings, 8, 160, 148, 42, LV_SYMBOL_REFRESH " SYNC NTP", COL_BLUE, COL_WHITE);
+    lv_obj_t* btn_sync = make_btn(_scr_settings, 8, set_act_y, 148, set_act_h, LV_SYMBOL_REFRESH " SYNC NTP", COL_BLUE, COL_WHITE);
     lv_obj_add_event_cb(
         btn_sync,
         [](lv_event_t* e) {
@@ -1628,7 +1647,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_demo = make_btn(_scr_settings, 164, 160, 148, 42, LV_SYMBOL_BELL " TEST RING", COL_AMBER, COL_BG);
+    lv_obj_t* btn_demo = make_btn(_scr_settings, 164, set_act_y, 148, set_act_h, LV_SYMBOL_BELL " TEST RING", COL_AMBER, COL_BG);
     lv_obj_add_event_cb(
         btn_demo,
         [](lv_event_t* e) {
@@ -1637,7 +1656,7 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     _lbl_set_sync = lv_label_create(_scr_settings);
-    lv_obj_set_pos(_lbl_set_sync, 10, 210);
+    lv_obj_set_pos(_lbl_set_sync, 10, set_sync_y);
     lv_obj_set_width(_lbl_set_sync, 300);
     lv_obj_set_style_text_align(_lbl_set_sync, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_lbl_set_sync, &lv_font_montserrat_12, 0);
@@ -1651,20 +1670,20 @@ void AppAlarm::build_ui()
     lv_obj_add_flag(_scr_ring, LV_OBJ_FLAG_HIDDEN);
 
     _lbl_ring_time = lv_label_create(_scr_ring);
-    lv_obj_align(_lbl_ring_time, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_align(_lbl_ring_time, LV_ALIGN_TOP_MID, 0, top_y + (is_fix ? 2 : 8));
     lv_obj_set_style_text_font(_lbl_ring_time, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_ring_time, lv_color_hex(COL_WHITE), 0);
     lv_label_set_text(_lbl_ring_time, "07:00");
 
     _lbl_ring_label = lv_label_create(_scr_ring);
-    lv_obj_align(_lbl_ring_label, LV_ALIGN_TOP_MID, 0, 36);
+    lv_obj_align(_lbl_ring_label, LV_ALIGN_TOP_MID, 0, top_y + (is_fix ? 26 : 36));
     lv_obj_set_style_text_font(_lbl_ring_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_ring_label, lv_color_hex(COL_AMBER), 0);
     lv_label_set_text(_lbl_ring_label, "Wake Up");
 
     _ring_face_card = lv_obj_create(_scr_ring);
-    lv_obj_set_size(_ring_face_card, 132, 84);
-    lv_obj_align(_ring_face_card, LV_ALIGN_CENTER, 0, -4);
+    lv_obj_set_size(_ring_face_card, 132, is_fix ? 76 : 84);
+    lv_obj_align(_ring_face_card, LV_ALIGN_CENTER, 0, is_fix ? 8 : -4);
     style_box(_ring_face_card, COL_CARD, 16);
     lv_obj_set_style_border_width(_ring_face_card, 2, 0);
     lv_obj_set_style_border_color(_ring_face_card, lv_color_hex(COL_AMBER), 0);
@@ -1688,19 +1707,19 @@ void AppAlarm::build_ui()
     _ring_avatar_img = lv_image_create(_scr_ring);
     if (_img_naruto_happy.data != nullptr) {
         lv_image_set_src(_ring_avatar_img, &_img_naruto_happy);
-        uint16_t rscale = (_img_naruto_happy.header.w > 130) ? 160 : 256;
+        uint16_t rscale = (_img_naruto_happy.header.w > 130) ? (is_fix ? 140 : 160) : 256;
         lv_image_set_scale(_ring_avatar_img, rscale);
     }
-    lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, -4);
+    lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, is_fix ? 8 : -4);
     lv_obj_remove_flag(_ring_avatar_img, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t* lbl_hint = lv_label_create(_scr_ring);
-    lv_obj_align(lbl_hint, LV_ALIGN_CENTER, 0, 48);
+    lv_obj_align(lbl_hint, LV_ALIGN_CENTER, 0, is_fix ? 54 : 48);
     lv_obj_set_style_text_font(lbl_hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_hint, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(lbl_hint, "Pet head: Snooze  |  Shake: Stop");
 
-    lv_obj_t* btn_snooze = make_btn(_scr_ring, 8, 182, 148, 50, "SNOOZE 5m", COL_BLUE, COL_WHITE);
+    lv_obj_t* btn_snooze = make_btn(_scr_ring, 8, 186, 148, 46, "SNOOZE 5m", COL_BLUE, COL_WHITE);
     _lbl_ring_snooze     = lv_obj_get_child(btn_snooze, 0);
     lv_obj_set_style_text_font(_lbl_ring_snooze, &lv_font_montserrat_14, 0);
     lv_obj_add_event_cb(
@@ -1710,7 +1729,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_stop = make_btn(_scr_ring, 164, 182, 148, 50, LV_SYMBOL_STOP " STOP", COL_RED, COL_WHITE);
+    lv_obj_t* btn_stop = make_btn(_scr_ring, 164, 186, 148, 46, LV_SYMBOL_STOP " STOP", COL_RED, COL_WHITE);
     lv_obj_set_style_text_font(lv_obj_get_child(btn_stop, 0), &lv_font_montserrat_14, 0);
     lv_obj_add_event_cb(
         btn_stop,
@@ -1911,9 +1930,11 @@ void AppAlarm::refresh_clock_ui(uint32_t now_ms)
     lv_label_set_text(_lbl_sec, sbuf);
     lv_label_set_text(_lbl_date, dbuf);
 
-    char batt[16];
-    std::snprintf(batt, sizeof(batt), "%d%%", GetHAL().getBatteryLevel());
-    lv_label_set_text(_lbl_batt, batt);
+    if (_lbl_batt) {
+        char batt[16];
+        std::snprintf(batt, sizeof(batt), "%d%%", GetHAL().getBatteryLevel());
+        lv_label_set_text(_lbl_batt, batt);
+    }
 
     std::string next_str;
     bool has_next = AlarmService::instance().findNextAlarmText(next_str);
@@ -2090,12 +2111,13 @@ void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
             lv_obj_set_style_border_color(_face_card, lv_color_hex(_night_mode ? COL_BLUE : COL_TEAL_DK), 0);
         }
     } else if (_screen == Screen::Ringing) {
+        const int ring_base_y = (view::get_status_bar_top_offset() > 0) ? 8 : -4;
         if (use_naruto && _ring_avatar_img) {
             if (_ring_face_card) lv_obj_add_flag(_ring_face_card, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(_ring_avatar_img, LV_OBJ_FLAG_HIDDEN);
 
-            int dy = static_cast<int>(std::sin(now_ms * 0.025f) * 5.0f);
-            lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, -4 + dy);
+            int dy = static_cast<int>(std::sin(now_ms * 0.025f) * 4.0f);
+            lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, ring_base_y + dy);
 
             // Responsive expression based on audio volume
             bool loud = _audio_rms.load() > 800;
@@ -2105,7 +2127,7 @@ void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
             int ring_idx = loud ? 1 : 0;
             if (ring_img->data != nullptr && _shown_ring_naruto_idx != ring_idx) {
                 lv_image_set_src(_ring_avatar_img, ring_img);
-                uint16_t rscale = (ring_img->header.w > 130) ? 160 : 256;
+                uint16_t rscale = (ring_img->header.w > 130) ? ((ring_base_y > 0) ? 140 : 160) : 256;
                 lv_image_set_scale(_ring_avatar_img, rscale);
                 _shown_ring_naruto_idx = ring_idx;
             }
@@ -2115,7 +2137,7 @@ void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
 
             bool blink = ((now_ms % 4200) < 150);
             int dy     = static_cast<int>(std::sin(now_ms * 0.025f) * 4.0f);
-            lv_obj_align(_ring_face_card, LV_ALIGN_CENTER, 0, -4 + dy);
+            lv_obj_align(_ring_face_card, LV_ALIGN_CENTER, 0, ring_base_y + dy);
             lv_obj_set_size(_ring_eye_l, 18, blink ? 4 : 14);
             lv_obj_set_size(_ring_eye_r, 18, blink ? 4 : 14);
             int mh = 8 + std::clamp<int>(_audio_rms.load() / 320, 0, 14);
