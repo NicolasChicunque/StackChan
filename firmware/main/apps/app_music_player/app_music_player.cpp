@@ -2996,9 +2996,9 @@ void AppMusicPlayer::refresh_main_ui(uint32_t now)
         lv_obj_set_width(_bar_fill, std::max(0, fw));
     }
 
-    std::string vol_line = "VOL " + std::to_string(_volume) + " " + APP_VERSION;
+    std::string vol_line = APP_VERSION;
     if (_wifi_svc && _wifi_svc->is_web_running()) {
-        vol_line += " WEB";
+        vol_line += "  WEB ON";
     }
     lv_label_set_text(_lbl_vol_ver, vol_line.c_str());
 

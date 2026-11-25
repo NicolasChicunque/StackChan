@@ -1534,22 +1534,22 @@ void AppGemini::build_ui()
     const int stage_y = top_y + (is_fix ? 22 : 30);
     const int stage_h = 144 - stage_y;
 
-    // App header row below system status bar
+    // App header row below system status bar (voice name on the right; volume is in the top bar)
     _lbl_badge = lv_label_create(_root_cont);
     lv_obj_set_pos(_lbl_badge, 10, hdr_y);
-    lv_obj_set_width(_lbl_badge, 195);
+    lv_obj_set_width(_lbl_badge, 200);
     lv_label_set_long_mode(_lbl_badge, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_badge, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_badge, lv_color_hex(COL_GEMINI_BLUE), 0);
     lv_label_set_text(_lbl_badge, "GEMINI");
 
     _lbl_vol_batt = lv_label_create(_root_cont);
-    lv_obj_set_pos(_lbl_vol_batt, 210, hdr_y + 1);
-    lv_obj_set_width(_lbl_vol_batt, 100);
+    lv_obj_set_pos(_lbl_vol_batt, 214, hdr_y + 1);
+    lv_obj_set_width(_lbl_vol_batt, 96);
     lv_obj_set_style_text_align(_lbl_vol_batt, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(_lbl_vol_batt, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_vol_batt, lv_color_hex(COL_DIM), 0);
-    lv_label_set_text(_lbl_vol_batt, "VOL 75%");
+    lv_label_set_text(_lbl_vol_batt, _voice_name.c_str());
 
     // Center stage
     _stage_cont = lv_obj_create(_root_cont);
@@ -1829,11 +1829,9 @@ void AppGemini::refresh_ui(uint32_t now)
 
     SessionState st = static_cast<SessionState>(_state.load());
 
-    // Top right: speaker volume synchronized with the top status bar
+    // Keep speaker volume synchronized with the top status bar; show active voice preset on the right
     _volume = std::clamp(static_cast<int>(GetHAL().getSpeakerVolume()), 0, 100);
-    char vbuf[24];
-    std::snprintf(vbuf, sizeof(vbuf), "VOL %d%%", _volume);
-    lv_label_set_text(_lbl_vol_batt, vbuf);
+    lv_label_set_text(_lbl_vol_batt, _voice_name.c_str());
 
     // State-dependent badge, primary button, and setup card
     if (_last_rendered_state != static_cast<int>(st)) {
