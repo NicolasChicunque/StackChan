@@ -44,8 +44,9 @@ extern "C" void app_main(void)
         hal_toggles::register_app_id(hal_toggles::App::Music,
                                      GetMooncake().installApp(std::make_unique<AppMusicPlayer>()));
         hal_toggles::register_app_id(hal_toggles::App::Gemini, GetMooncake().installApp(std::make_unique<AppGemini>()));
-        GetMooncake().installApp(std::make_unique<AppMcp>());
+        hal_toggles::register_app_id(hal_toggles::App::Mcp, GetMooncake().installApp(std::make_unique<AppMcp>()));
         const int alarm_app_id = GetMooncake().installApp(std::make_unique<AppAlarm>());
+        hal_toggles::register_app_id(hal_toggles::App::Alarm, alarm_app_id);
         GetMooncake().installApp(std::make_unique<AppSetup>());
 
         // Start background alarm scheduler (index in launcher list, excluding the launcher itself)

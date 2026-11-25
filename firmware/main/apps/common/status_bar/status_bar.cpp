@@ -713,7 +713,6 @@ bool is_status_bar_created()
 void destroy_status_bar()
 {
     _status_bar.reset();
-    s_pending_home_cb = nullptr;
 }
 
 }  // namespace view

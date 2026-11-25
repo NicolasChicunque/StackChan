@@ -82,8 +82,8 @@ constexpr int MAX_SCAN_DEPTH     = 3;
 constexpr uint32_t COL_BG        = 0x0B0F1A;
 constexpr uint32_t COL_CARD      = 0x151B2E;
 constexpr uint32_t COL_CARD_HI   = 0x232C4A;
-constexpr uint32_t COL_ACCENT    = 0x3D7DFF;
-constexpr uint32_t COL_ACCENT_DK = 0x24417F;
+constexpr uint32_t COL_ACCENT    = 0xFF4D6D;
+constexpr uint32_t COL_ACCENT_DK = 0x8F1D35;
 constexpr uint32_t COL_YELLOW    = 0xFFC940;
 constexpr uint32_t COL_TEXT      = 0xE8EEF9;
 constexpr uint32_t COL_DIM       = 0x7C89A8;
@@ -199,7 +199,7 @@ AppMusicPlayer::AppMusicPlayer()
         setAppInfo().icon = (void*)&icon_music;
     }
 
-    static uint32_t theme_color = 0x3D7DFF;
+    static uint32_t theme_color = COL_ACCENT;
     setAppInfo().userData       = (void*)&theme_color;
 }
 
@@ -300,8 +300,8 @@ void AppMusicPlayer::onOpen()
         refresh_main_ui(now);
         refresh_avatar_anim(now);
 
-        view::create_home_indicator([&]() { close(); }, 0x3D7DFF, 0x0B0F1A);
-        view::create_status_bar(0x3D7DFF, 0x0B0F1A);
+        view::create_home_indicator([&]() { close(); }, COL_ACCENT, COL_BG);
+        view::create_status_bar(COL_ACCENT, COL_BG);
     }
 }
 

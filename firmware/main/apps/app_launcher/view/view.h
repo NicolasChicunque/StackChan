@@ -69,7 +69,10 @@ private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _left_eye;
     std::unique_ptr<uitk::lvgl_cpp::Container> _right_eye;
     std::unique_ptr<uitk::lvgl_cpp::Container> _mouth;
-    int _color_index = 0;
+    lv_obj_t* _naruto_img          = nullptr;
+    lv_image_dsc_t _naruto_imgs[4] = {};
+    bool _use_naruto               = false;
+    int _color_index               = 0;
 };
 
 }  // namespace view
