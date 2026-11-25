@@ -3,8 +3,10 @@
  *
  * SPDX-License-Identifier: MIT
  */
+#include "status_bar.h"
 #include <mooncake.h>
 #include <mooncake_log.h>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <smooth_ui_toolkit.hpp>
@@ -13,6 +15,7 @@
 #include <fmt/chrono.h>
 #include <hal/hal.h>
 #include <memory>
+#include <nvs.h>
 #include <vector>
 #include <lvgl.h>
 #include <src/draw/lv_image_dsc.h>
@@ -20,8 +23,17 @@
 using namespace smooth_ui_toolkit;
 using namespace smooth_ui_toolkit::lvgl_cpp;
 
+namespace {
+
+constexpr const char* kStatusBarNvsNs  = "ui_prefs";
+constexpr const char* kStatusBarNvsKey = "sb_mode";
+std::atomic<int> s_cached_sb_mode{-1};
+std::function<void(void)> s_pending_home_cb;
+
+}  // namespace
+
 /**
- * @brief
+ * @brief Top-down swipe gesture detector (active only in AutoHide mode).
  *
  */
 class StatuBarGesture {
@@ -37,8 +49,8 @@ public:
         _is_tracking    = false;
         _last_state     = LV_INDEV_STATE_REL;
         _screen_height  = 240;
-        _top_threshold  = 20;  // 距离顶部 20 像素内触发
-        _swipe_min_dist = 50;  // 向下滑动至少 50 像素才触发
+        _top_threshold  = 20;  // Within 20 px from top edge
+        _swipe_min_dist = 50;  // Swipe down at least 50 px
     }
 
     void update()
@@ -52,38 +64,36 @@ public:
         lv_point_t curr_point;
         lv_indev_get_point(indev, &curr_point);
 
-        // 1. 按下瞬间 (Transition: Released -> Pressed)
+        // 1. Transition: Released -> Pressed
         if (state == LV_INDEV_STATE_PR && _last_state == LV_INDEV_STATE_REL) {
-            // 只有在按下那一刻就在顶部，才标记为追踪开始
             if (curr_point.y <= _top_threshold && curr_point.y >= 0) {
                 _start_point = curr_point;
                 _is_tracking = true;
             } else {
-                _is_tracking = false;  // 按下位置不对，此次滑动全程忽略
+                _is_tracking = false;
             }
         }
-        // 2. 抬起瞬间 (Transition: Pressed -> Released)
+        // 2. Transition: Pressed -> Released
         else if (state == LV_INDEV_STATE_REL && _last_state == LV_INDEV_STATE_PR) {
             if (_is_tracking) {
-                int delta_y = curr_point.y - _start_point.y;  // 向下滑为正
+                int delta_y = curr_point.y - _start_point.y;
                 int delta_x = abs(curr_point.x - _start_point.x);
 
-                // 判断标准：向下位移足够，且角度偏垂直
                 if (delta_y > _swipe_min_dist && delta_y > delta_x) {
                     if (onGesture) {
                         onGesture();
                     }
                 }
-                _is_tracking = false;  // 重置追踪状态
+                _is_tracking = false;
             }
         }
 
-        _last_state = state;  // 更新状态机
+        _last_state = state;
     }
 
 private:
     bool _is_tracking;
-    lv_indev_state_t _last_state;  // 记录上一帧的状态
+    lv_indev_state_t _last_state;
     lv_point_t _start_point;
     int _screen_height;
     int _top_threshold;
@@ -106,7 +116,7 @@ public:
         _label->setText("");
         _label->setTextColor(lv_color_hex(colorText));
         _label->setTextFont(&lv_font_montserrat_16);
-        _label->align(LV_ALIGN_CENTER, 0, 0);
+        _label->align(LV_ALIGN_CENTER, -14, 0);
 
         update();
     }
@@ -207,11 +217,11 @@ public:
         _label_level = std::make_unique<Label>(parent);
         _label_level->setText("");
         _label_level->setTextColor(lv_color_hex(colorPrimary));
-        _label_level->setTextFont(&lv_font_montserrat_16);
-        _label_level->align(LV_ALIGN_RIGHT_MID, -41, 0);
+        _label_level->setTextFont(&lv_font_montserrat_14);
+        _label_level->align(LV_ALIGN_RIGHT_MID, -79, 0);
 
         _battery_icon = std::make_unique<BatteryIcon>(parent, colorSecondary, colorPrimary);
-        _battery_icon->align(LV_ALIGN_RIGHT_MID, -7, 0);
+        _battery_icon->align(LV_ALIGN_RIGHT_MID, -45, 0);
 
         update();
     }
@@ -234,7 +244,7 @@ public:
     Wifi(lv_obj_t* parent, uint32_t colorPrimary)
     {
         _wifi_icon = std::make_unique<Image>(parent);
-        _wifi_icon->align(LV_ALIGN_LEFT_MID, 11, 0);
+        _wifi_icon->align(LV_ALIGN_LEFT_MID, 10, 0);
         _wifi_icon->setImageRecolor(lv_color_hex(colorPrimary));
         _wifi_icon->setImageRecolorOpa(LV_OPA_COVER);
 
@@ -276,10 +286,69 @@ private:
     lv_image_dsc_t _icon_wifi_slash;
 };
 
+class HomeExitButton {
+public:
+    HomeExitButton(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary)
+    {
+        _btn = std::make_unique<Container>(parent);
+        _btn->setSize(34, 24);
+        _btn->align(LV_ALIGN_RIGHT_MID, -3, 0);
+        _btn->setRadius(7);
+        _btn->setBgColor(lv_color_hex(colorPrimary));
+        _btn->setBgOpa(36);
+        _btn->setBorderWidth(1);
+        _btn->setBorderColor(lv_color_hex(colorPrimary));
+        _btn->setPadding(0, 0, 0, 0);
+        _btn->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
+        _btn->addFlag(LV_OBJ_FLAG_CLICKABLE);
+        _btn->onClick().connect([this]() { _is_clicked = true; });
+
+        _icon_home = assets::get_image("icon_home.bin");
+        if (_icon_home.data != nullptr && _icon_home.data_size > 0) {
+            _icon = std::make_unique<Image>(_btn->get());
+            _icon->setSrc(&_icon_home);
+            _icon->setImageRecolorOpa(LV_OPA_COVER);
+            _icon->setImageRecolor(lv_color_hex(colorPrimary));
+            if (_icon_home.header.h > 20) {
+                uint16_t scale = static_cast<uint16_t>((18 * 256) / _icon_home.header.h);
+                lv_image_set_scale(_icon->get(), scale);
+            }
+            _icon->align(LV_ALIGN_CENTER, 0, 0);
+            _icon->removeFlag(LV_OBJ_FLAG_CLICKABLE);
+        } else {
+            _label = std::make_unique<Label>(_btn->get());
+            _label->setText(LV_SYMBOL_HOME);
+            _label->setTextFont(&lv_font_montserrat_16);
+            _label->setTextColor(lv_color_hex(colorPrimary));
+            _label->align(LV_ALIGN_CENTER, 0, 0);
+            _label->removeFlag(LV_OBJ_FLAG_CLICKABLE);
+        }
+        (void)colorSecondary;
+    }
+
+    bool consumeClick()
+    {
+        if (_is_clicked) {
+            _is_clicked = false;
+            return true;
+        }
+        return false;
+    }
+
+private:
+    std::unique_ptr<Container> _btn;
+    std::unique_ptr<Image> _icon;
+    std::unique_ptr<Label> _label;
+    lv_image_dsc_t _icon_home = {};
+    bool _is_clicked          = false;
+};
+
 class StatusBarView {
 public:
-    StatusBarView(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary)
+    StatusBarView(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary, bool fixedMode)
+        : _fixed_mode(fixedMode)
     {
+        (void)parent;
         _panel = std::make_unique<uitk::lvgl_cpp::Container>(lv_screen_active());
         _panel->setBgColor(lv_color_hex(colorSecondary));
         _panel->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
@@ -288,28 +357,37 @@ public:
         _panel->setSize(320, 28);
         _panel->setRadius(0);
         _panel->setPadding(0, 0, 0, 0);
-        _panel->onClick().connect([this]() { hide(); });
+        _panel->onClick().connect([this]() {
+            if (!_fixed_mode) {
+                hide();
+            }
+        });
 
         _widgets.push_back(std::make_unique<TimeLabel>(_panel->get(), colorPrimary));
         _widgets.push_back(std::make_unique<Battery>(_panel->get(), colorSecondary, colorPrimary));
         _widgets.push_back(std::make_unique<Wifi>(_panel->get(), colorPrimary));
+        _home_btn = std::make_unique<HomeExitButton>(_panel->get(), colorSecondary, colorPrimary);
 
-        _panel->setPos(0, _pos_y_hide);
+        int init_y = _fixed_mode ? _pos_y_show : _pos_y_hide;
+        _panel->setPos(0, init_y);
         _pos_y_anim.springOptions().bounce         = 0.1;
         _pos_y_anim.springOptions().visualDuration = 0.3;
-        // _pos_y_anim.easingOptions().duration = 0.3;
-        _pos_y_anim.teleport(_pos_y_hide);
+        _pos_y_anim.teleport(init_y);
     }
 
     void update()
     {
-        _pos_y_anim.update();
-        if (!_pos_y_anim.done()) {
-            _panel->setPos(0, _pos_y_anim.directValue());
+        if (_fixed_mode) {
+            _panel->moveForeground();
         } else {
-            if (_hide_panel_flag) {
-                _hide_panel_flag = false;
-                _panel->setHidden(true);
+            _pos_y_anim.update();
+            if (!_pos_y_anim.done()) {
+                _panel->setPos(0, _pos_y_anim.directValue());
+            } else {
+                if (_hide_panel_flag) {
+                    _hide_panel_flag = false;
+                    _panel->setHidden(true);
+                }
             }
         }
 
@@ -325,12 +403,20 @@ public:
     {
         _panel->moveForeground();
         _panel->setHidden(false);
-        _pos_y_anim = _pos_y_show;
-        _is_hidden  = false;
+        if (_fixed_mode) {
+            _panel->setPos(0, _pos_y_show);
+            _pos_y_anim.teleport(_pos_y_show);
+        } else {
+            _pos_y_anim = _pos_y_show;
+        }
+        _is_hidden = false;
     }
 
     void hide()
     {
+        if (_fixed_mode) {
+            return;
+        }
         _pos_y_anim      = _pos_y_hide;
         _is_hidden       = true;
         _hide_panel_flag = true;
@@ -341,12 +427,19 @@ public:
         return _is_hidden;
     }
 
+    bool consumeHomeClick()
+    {
+        return _home_btn && _home_btn->consumeClick();
+    }
+
 private:
     const int _pos_y_show = 0;
     const int _pos_y_hide = -28;
 
+    bool _fixed_mode = true;
     std::unique_ptr<Container> _panel;
     std::vector<std::unique_ptr<Widget>> _widgets;
+    std::unique_ptr<HomeExitButton> _home_btn;
     AnimateValue _pos_y_anim;
     bool _is_hidden            = false;
     bool _hide_panel_flag      = false;
@@ -356,18 +449,24 @@ private:
 }  // namespace status_bar_view
 
 /**
- * @brief
+ * @brief StatusBar controller supporting Fixed and AutoHide modes + Home button.
  *
  */
 class StatusBar {
 public:
-    void init(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary)
+    std::function<void(void)> onGoHome;
+
+    void init(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary, std::function<void(void)> homeCb)
     {
+        onGoHome        = std::move(homeCb);
+        _fixed_mode     = (view::get_status_bar_mode() == view::StatusBarMode::Fixed);
+
         _status_bar_gesture            = std::make_unique<StatuBarGesture>();
         _status_bar_gesture->onGesture = [&]() { handle_gesture(); };
         _status_bar_gesture->init();
 
-        _status_bar_view = std::make_unique<status_bar_view::StatusBarView>(parent, colorSecondary, colorPrimary);
+        _status_bar_view =
+            std::make_unique<status_bar_view::StatusBarView>(parent, colorSecondary, colorPrimary, _fixed_mode);
         _status_bar_view->show();
         _status_bar_show_tick = GetHAL().millis();
         _is_first_show        = true;
@@ -375,12 +474,22 @@ public:
 
     void update()
     {
-        _status_bar_gesture->update();
+        if (!_fixed_mode) {
+            _status_bar_gesture->update();
+        }
         _status_bar_view->update();
-        update_visibility();
+        if (!_fixed_mode) {
+            update_visibility();
+        }
+        if (_status_bar_view->consumeHomeClick()) {
+            if (onGoHome) {
+                onGoHome();
+            }
+        }
     }
 
 private:
+    bool _fixed_mode = true;
     std::unique_ptr<StatuBarGesture> _status_bar_gesture;
     std::unique_ptr<status_bar_view::StatusBarView> _status_bar_view;
     uint32_t _status_bar_show_tick = 0;
@@ -403,18 +512,65 @@ private:
     }
 };
 
-/**
- * @brief
- *
- */
 namespace view {
 
 static std::unique_ptr<StatusBar> _status_bar;
 
-void create_status_bar(uint32_t colorSecondary, uint32_t colorPrimary, lv_obj_t* parent)
+StatusBarMode get_status_bar_mode()
 {
+    int cached = s_cached_sb_mode.load();
+    if (cached >= 0) {
+        return (cached == static_cast<int>(StatusBarMode::AutoHide)) ? StatusBarMode::AutoHide : StatusBarMode::Fixed;
+    }
+
+    uint8_t val = static_cast<uint8_t>(StatusBarMode::Fixed);
+    nvs_handle_t h{};
+    if (nvs_open(kStatusBarNvsNs, NVS_READONLY, &h) == ESP_OK) {
+        uint8_t stored = val;
+        if (nvs_get_u8(h, kStatusBarNvsKey, &stored) == ESP_OK && stored <= 1) {
+            val = stored;
+        }
+        nvs_close(h);
+    }
+
+    s_cached_sb_mode.store(static_cast<int>(val));
+    return static_cast<StatusBarMode>(val);
+}
+
+void set_status_bar_mode(StatusBarMode mode)
+{
+    uint8_t val = (mode == StatusBarMode::AutoHide) ? 1 : 0;
+    s_cached_sb_mode.store(static_cast<int>(val));
+
+    nvs_handle_t h{};
+    if (nvs_open(kStatusBarNvsNs, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, kStatusBarNvsKey, val);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+int get_status_bar_top_offset()
+{
+    return (get_status_bar_mode() == StatusBarMode::Fixed) ? 28 : 0;
+}
+
+void create_status_bar(uint32_t colorSecondary, uint32_t colorPrimary, lv_obj_t* parent,
+                       std::function<void(void)> onGoHome)
+{
+    if (!onGoHome && s_pending_home_cb) {
+        onGoHome = s_pending_home_cb;
+    }
     _status_bar = std::make_unique<StatusBar>();
-    _status_bar->init(parent, colorSecondary, colorPrimary);
+    _status_bar->init(parent, colorSecondary, colorPrimary, std::move(onGoHome));
+}
+
+void set_status_bar_home_callback(std::function<void(void)> onGoHome)
+{
+    s_pending_home_cb = onGoHome;
+    if (_status_bar) {
+        _status_bar->onGoHome = std::move(onGoHome);
+    }
 }
 
 void update_status_bar()
@@ -432,6 +588,7 @@ bool is_status_bar_created()
 void destroy_status_bar()
 {
     _status_bar.reset();
+    s_pending_home_cb = nullptr;
 }
 
 }  // namespace view

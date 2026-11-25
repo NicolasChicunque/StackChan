@@ -79,6 +79,11 @@ void AppSetup::onOpen()
               [&]() {
                   _destroy_menu = true;
                   _worker       = std::make_unique<AvatarStyleWorker>();
+              }},
+             {"Status Bar",
+              [&]() {
+                  _destroy_menu = true;
+                  _worker       = std::make_unique<StatusBarModeWorker>();
               }}},
         },
         {

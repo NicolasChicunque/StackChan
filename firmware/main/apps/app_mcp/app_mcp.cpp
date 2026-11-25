@@ -1265,26 +1265,32 @@ void AppMcp::build_ui()
     lv_obj_set_pos(_root, 0, 0);
     style_box(_root, COL_BG, 0);
 
-    // Top bar: MCP IP (left) + Battery (right)
+    const int top_y   = view::get_status_bar_top_offset();
+    const bool is_fix = (top_y > 0);
+    const int hdr_y   = top_y + (is_fix ? 2 : 5);
+    const int stage_y = top_y + (is_fix ? 22 : 26);
+    const int stage_h = 180 - stage_y;
+
+    // App header below system status bar: MCP IP (left) + Volume (right; battery is in top bar)
     _lbl_ip = lv_label_create(_root);
-    lv_obj_set_pos(_lbl_ip, 10, 5);
-    lv_obj_set_size(_lbl_ip, 236, 18);
+    lv_obj_set_pos(_lbl_ip, 10, hdr_y);
+    lv_obj_set_size(_lbl_ip, 224, 18);
     lv_label_set_long_mode(_lbl_ip, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_ip, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_ip, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(_lbl_ip, "MCP  Wi-Fi...");
 
     _lbl_batt = lv_label_create(_root);
-    lv_obj_set_pos(_lbl_batt, 250, 6);
-    lv_obj_set_width(_lbl_batt, 62);
+    lv_obj_set_pos(_lbl_batt, 236, hdr_y + 1);
+    lv_obj_set_width(_lbl_batt, 76);
     lv_obj_set_style_text_align(_lbl_batt, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(_lbl_batt, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_batt, lv_color_hex(COL_DIM), 0);
 
     // Center stage (tap to dictate / stop)
     _stage = lv_obj_create(_root);
-    lv_obj_set_pos(_stage, 8, 26);
-    lv_obj_set_size(_stage, 304, 152);
+    lv_obj_set_pos(_stage, 8, stage_y);
+    lv_obj_set_size(_stage, 304, stage_h);
     style_box(_stage, COL_CARD, 14);
     lv_obj_set_style_border_width(_stage, 1, 0);
     lv_obj_set_style_border_color(_stage, lv_color_hex(COL_CARD_HI), 0);
@@ -1296,18 +1302,18 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    // Naruto avatar image (scaled from 180x180 -> ~124x124)
+    // Naruto avatar image (scaled from 180x180 -> fits stage cleanly)
     _avatar_img = lv_image_create(_stage);
     if (_naruto_imgs[0].data != nullptr) {
         lv_image_set_src(_avatar_img, &_naruto_imgs[0]);
-        lv_image_set_scale(_avatar_img, 176);
+        lv_image_set_scale(_avatar_img, is_fix ? 156 : 176);
     }
     lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, -10);
     lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
 
     // Classic StackChan face fallback
     _face_card = lv_obj_create(_stage);
-    lv_obj_set_size(_face_card, 120, 86);
+    lv_obj_set_size(_face_card, 120, is_fix ? 76 : 86);
     lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, -10);
     style_box(_face_card, COL_BG, 14);
     lv_obj_set_style_border_width(_face_card, 2, 0);
@@ -1348,10 +1354,10 @@ void AppMcp::build_ui()
     lv_obj_set_size(_bar_level, 0, 4);
     style_box(_bar_level, COL_TEAL, 2);
 
-    // Bottom bar: TALK | AUTO | SET | EXIT
+    // Bottom 3-button bar: TALK | AUTO | SET (Exit is in the top status bar)
     _btn_dictate = lv_button_create(_root);
     lv_obj_set_pos(_btn_dictate, 8, 186);
-    lv_obj_set_size(_btn_dictate, 120, 44);
+    lv_obj_set_size(_btn_dictate, 148, 44);
     style_box(_btn_dictate, COL_TEAL_DK, 10);
     _lbl_dictate = lv_label_create(_btn_dictate);
     lv_obj_center(_lbl_dictate);
@@ -1366,8 +1372,8 @@ void AppMcp::build_ui()
         LV_EVENT_CLICKED, this);
 
     _btn_auto = lv_button_create(_root);
-    lv_obj_set_pos(_btn_auto, 132, 186);
-    lv_obj_set_size(_btn_auto, 64, 44);
+    lv_obj_set_pos(_btn_auto, 162, 186);
+    lv_obj_set_size(_btn_auto, 74, 44);
     style_box(_btn_auto, COL_GREEN, 10);
     _lbl_auto = lv_label_create(_btn_auto);
     lv_obj_center(_lbl_auto);
@@ -1395,19 +1401,11 @@ void AppMcp::build_ui()
         return b;
     };
 
-    lv_obj_t* btn_set = make_btn(_root, 200, 186, 60, 44, LV_SYMBOL_SETTINGS " SET", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_set = make_btn(_root, 242, 186, 70, 44, LV_SYMBOL_SETTINGS " SET", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_set,
         [](lv_event_t* e) {
             static_cast<AppMcp*>(lv_event_get_user_data(e))->set_settings_open(true);
-        },
-        LV_EVENT_CLICKED, this);
-
-    lv_obj_t* btn_exit = make_btn(_root, 264, 186, 48, 44, "EXIT", COL_CARD_HI, COL_YELLOW);
-    lv_obj_add_event_cb(
-        btn_exit,
-        [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->close();
         },
         LV_EVENT_CLICKED, this);
 
@@ -1418,13 +1416,21 @@ void AppMcp::build_ui()
     style_box(_settings_panel, COL_BG, 0);
     lv_obj_add_flag(_settings_panel, LV_OBJ_FLAG_HIDDEN);
 
+    const int set_hdr_y = top_y + (is_fix ? 4 : 10);
+    const int row_h     = is_fix ? 48 : 56;
+    const int row_y0    = top_y + (is_fix ? 36 : 44);
+    const int row_step  = is_fix ? 54 : 64;
+    const int btn_ry    = is_fix ? 6 : 9;
+    const int btn_rh    = is_fix ? 36 : 38;
+    const int lbl_ry    = is_fix ? 15 : 19;
+
     lv_obj_t* lbl_set_title = lv_label_create(_settings_panel);
-    lv_obj_set_pos(lbl_set_title, 12, 12);
+    lv_obj_set_pos(lbl_set_title, 12, set_hdr_y + 4);
     lv_obj_set_style_text_font(lbl_set_title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_set_title, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(lbl_set_title, LV_SYMBOL_SETTINGS " MCP SETTINGS");
 
-    lv_obj_t* btn_back = make_btn(_settings_panel, 240, 6, 70, 30, LV_SYMBOL_LEFT " BACK", COL_TEAL_DK, COL_WHITE);
+    lv_obj_t* btn_back = make_btn(_settings_panel, 240, set_hdr_y, 70, 28, LV_SYMBOL_LEFT " BACK", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         btn_back,
         [](lv_event_t* e) {
@@ -1435,10 +1441,10 @@ void AppMcp::build_ui()
     auto make_row = [&](int y, const char* title) {
         lv_obj_t* card = lv_obj_create(_settings_panel);
         lv_obj_set_pos(card, 10, y);
-        lv_obj_set_size(card, 300, 56);
+        lv_obj_set_size(card, 300, row_h);
         style_box(card, COL_CARD, 10);
         lv_obj_t* l = lv_label_create(card);
-        lv_obj_set_pos(l, 12, 20);
+        lv_obj_set_pos(l, 12, lbl_ry + 1);
         lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(l, lv_color_hex(COL_TEXT), 0);
         lv_label_set_text(l, title);
@@ -1446,8 +1452,8 @@ void AppMcp::build_ui()
     };
 
     // Row 1: Silence Pause (0.8s .. 4.0s)
-    lv_obj_t* row_pause = make_row(44, "PAUSE");
-    lv_obj_t* btn_pm    = make_btn(row_pause, 114, 9, 48, 38, "-", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* row_pause = make_row(row_y0, "PAUSE");
+    lv_obj_t* btn_pm    = make_btn(row_pause, 114, btn_ry, 48, btn_rh, "-", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_pm,
         [](lv_event_t* e) {
@@ -1456,13 +1462,13 @@ void AppMcp::build_ui()
         LV_EVENT_CLICKED, this);
 
     _lbl_set_pause = lv_label_create(row_pause);
-    lv_obj_set_pos(_lbl_set_pause, 164, 19);
+    lv_obj_set_pos(_lbl_set_pause, 164, lbl_ry);
     lv_obj_set_width(_lbl_set_pause, 72);
     lv_obj_set_style_text_align(_lbl_set_pause, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_lbl_set_pause, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_set_pause, lv_color_hex(COL_WHITE), 0);
 
-    lv_obj_t* btn_pp = make_btn(row_pause, 238, 9, 48, 38, "+", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* btn_pp = make_btn(row_pause, 238, btn_ry, 48, btn_rh, "+", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_pp,
         [](lv_event_t* e) {
@@ -1471,10 +1477,10 @@ void AppMcp::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Row 2: Mic Sensitivity (LOW / MED / HIGH)
-    lv_obj_t* row_mic          = make_row(108, "MIC");
+    lv_obj_t* row_mic          = make_row(row_y0 + row_step, "MIC");
     const char* sens_labels[3] = {"LOW", "MED", "HIGH"};
     for (int i = 0; i < 3; ++i) {
-        _btn_sens[i] = make_btn(row_mic, 114 + i * 59, 9, 54, 38, sens_labels[i], COL_CARD_HI, COL_WHITE);
+        _btn_sens[i] = make_btn(row_mic, 114 + i * 59, btn_ry, 54, btn_rh, sens_labels[i], COL_CARD_HI, COL_WHITE);
         lv_obj_set_user_data(_btn_sens[i], reinterpret_cast<void*>(static_cast<intptr_t>(i)));
         lv_obj_add_event_cb(
             _btn_sens[i],
@@ -1487,8 +1493,8 @@ void AppMcp::build_ui()
     }
 
     // Row 3: Speaker Volume (10% .. 100%)
-    lv_obj_t* row_vol = make_row(172, "VOLUME");
-    lv_obj_t* btn_vm  = make_btn(row_vol, 114, 9, 48, 38, "-", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* row_vol = make_row(row_y0 + row_step * 2, "VOLUME");
+    lv_obj_t* btn_vm  = make_btn(row_vol, 114, btn_ry, 48, btn_rh, "-", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_vm,
         [](lv_event_t* e) {
@@ -1497,13 +1503,13 @@ void AppMcp::build_ui()
         LV_EVENT_CLICKED, this);
 
     _lbl_set_vol = lv_label_create(row_vol);
-    lv_obj_set_pos(_lbl_set_vol, 164, 19);
+    lv_obj_set_pos(_lbl_set_vol, 164, lbl_ry);
     lv_obj_set_width(_lbl_set_vol, 72);
     lv_obj_set_style_text_align(_lbl_set_vol, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_lbl_set_vol, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_set_vol, lv_color_hex(COL_WHITE), 0);
 
-    lv_obj_t* btn_vp = make_btn(row_vol, 238, 9, 48, 38, "+", COL_CARD_HI, COL_WHITE);
+    lv_obj_t* btn_vp = make_btn(row_vol, 238, btn_ry, 48, btn_rh, "+", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_vp,
         [](lv_event_t* e) {
@@ -1551,9 +1557,9 @@ void AppMcp::refresh_ui(uint32_t now)
         lv_label_set_text(_lbl_ip, "MCP  Connecting...");
     }
 
-    char batt[16];
-    std::snprintf(batt, sizeof(batt), "%d%%", GetHAL().getBatteryLevel());
-    lv_label_set_text(_lbl_batt, batt);
+    char vol_str[20];
+    std::snprintf(vol_str, sizeof(vol_str), "VOL %d%%", _volume.load());
+    lv_label_set_text(_lbl_batt, vol_str);
 
     lv_label_set_text(_lbl_status, st.c_str());
 

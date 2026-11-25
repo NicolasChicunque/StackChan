@@ -488,4 +488,26 @@ private:
     bool _use_naruto = true;
 };
 
+/**
+ * @brief Select between Fixed and Auto-hide top Status Bar modes.
+ *
+ */
+class StatusBarModeWorker : public WorkerBase {
+public:
+    StatusBarModeWorker();
+    void update() override;
+
+private:
+    void refresh_buttons();
+
+    std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_title;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_hint;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_fixed;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_autohide;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_confirm;
+
+    bool _use_fixed = true;
+};
+
 }  // namespace setup_workers
