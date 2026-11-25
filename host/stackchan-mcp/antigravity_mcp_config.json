@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    //"unityMCP": {
+    //  "serverUrl": "http://127.0.0.1:8080/mcp",
+    //  "type": "http",
+    //  "disabled": false
+    //},
+    "stackchan": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "mcp_server.server"
+      ],
+      "cwd": "D:/StackChan/stackchan-mcp"
+    }
+  }
+}
