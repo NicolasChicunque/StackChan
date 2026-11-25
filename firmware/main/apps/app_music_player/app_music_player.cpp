@@ -107,17 +107,18 @@ constexpr int BAR_H    = 6;
 constexpr int STAGE_X  = 8;
 constexpr int STAGE_W  = 304;
 
-// Bottom 6-button control bar (y = 192 .. 234)
-constexpr int BAR6_Y   = 192;
-constexpr int BAR6_H   = 42;
-constexpr int BAR6_W   = 48;
-constexpr int BAR6_GAP = 4;
-constexpr int BAR6_X0  = 6; // 6 + 6*48 + 5*4 = 314 <= 320
+// Bottom 4-button control bar (y = 192 .. 234): PREV | PLAY/PAUSE | NEXT | SETTINGS
+// (Volume -/+ and Home are integrated in the 38px top status bar)
+constexpr int BAR4_Y   = 192;
+constexpr int BAR4_H   = 42;
+constexpr int BAR4_W   = 71;
+constexpr int BAR4_GAP = 6;
+constexpr int BAR4_X0  = 9; // 9 + 4*71 + 3*6 = 311 <= 320
 
 const char* const LOOP_NAMES[3] = {"OFF", "1", "ALL"};
 
-const char* const MAIN_BTN_NAMES[6] = {
-    "voldn", "prev", "play", "next", "volup", "settings",
+const char* const MAIN_BTN_NAMES[4] = {
+    "prev", "play", "next", "settings",
 };
 
 struct CfgBtnSpec {
@@ -133,15 +134,15 @@ struct CfgBtnSpec {
 // Row 2: SD LIST | RADIO | WEB/QR | HEAD
 // Footer: AVATAR (Classic/Naruto toggle) + BACK (Exit is in the top status bar)
 constexpr CfgBtnSpec CFG_BTN_SPECS[9] = {
-    {"loop",     8,   56,  73,  56},
-    {"shuf",     85,  56,  73,  56},
-    {"lights",   162, 56,  73,  56},
-    {"move",     239, 56,  73,  56},
-    {"playlist", 8,   120, 73,  56},
-    {"radio",    85,  120, 73,  56},
-    {"web",      162, 120, 73,  56},
-    {"head",     239, 120, 73,  56},
-    {"avatar",   8,   186, 148, 44},
+    {"loop",     8,   66,  73,  54},
+    {"shuf",     85,  66,  73,  54},
+    {"lights",   162, 66,  73,  54},
+    {"move",     239, 66,  73,  54},
+    {"playlist", 8,   126, 73,  54},
+    {"radio",    85,  126, 73,  54},
+    {"web",      162, 126, 73,  54},
+    {"head",     239, 126, 73,  54},
+    {"avatar",   8,   188, 148, 44},
 };
 
 uint16_t read_u16_le(const uint8_t* p)
@@ -332,6 +333,12 @@ void AppMusicPlayer::onRunning()
 
     {
         LvglLockGuard lock;
+        int hal_vol = static_cast<int>(GetHAL().getSpeakerVolume());
+        if (hal_vol != _volume) {
+            _volume = hal_vol;
+            save_settings();
+            refresh_main_ui(now);
+        }
 
         if (_mode == ScreenMode::Main) {
             if (now - _last_anim_tick >= 120) {
@@ -1429,7 +1436,7 @@ void AppMusicPlayer::change_volume(int delta)
 void AppMusicPlayer::set_volume(int vol)
 {
     _volume = std::clamp(vol, 0, 100);
-    GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume), false);
+    GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume), true);
     save_settings();
     set_status("VOL " + std::to_string(_volume));
 }
@@ -1930,19 +1937,19 @@ void AppMusicPlayer::build_ui()
     lv_obj_set_style_bg_color(_root_screen, lv_color_hex(COL_BG), 0);
     lv_obj_remove_flag(_root_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    const int top_y    = view::get_status_bar_top_offset();
-    const bool is_fix  = (top_y > 0);
-    const int title_y  = top_y + 2;
-    const int bar_y    = top_y + 22;
-    const int time_y   = top_y + 30;
-    const int status_y = top_y + 43;
-    const int stage_y  = top_y + 56;
-    const int stage_h  = 188 - stage_y;
-    const int sub_hdr_y  = top_y + 2;
-    const int row_y0     = top_y + (is_fix ? 24 : 26);
-    const int row_step   = is_fix ? 26 : 29;
-    const int row_h      = is_fix ? 23 : 26;
-    const int list_info_y = is_fix ? 185 : 178;
+    const int top_y       = view::get_status_bar_top_offset();
+    const bool is_fix     = (top_y > 0);
+    const int title_y     = top_y + 2;
+    const int bar_y       = top_y + 22;
+    const int time_y      = top_y + 30;
+    const int status_y    = top_y + 42;
+    const int stage_y     = top_y + 55;
+    const int stage_h     = 188 - stage_y;
+    const int sub_hdr_y   = top_y + 2;
+    const int row_y0      = top_y + (is_fix ? 23 : 26);
+    const int row_step    = is_fix ? 25 : 29;
+    const int row_h       = is_fix ? 22 : 26;
+    const int list_info_y = is_fix ? 186 : 178;
 
     /* ============================ 1. MAIN VIEW ============================= */
     _main_cont = lv_obj_create(_root_screen);
@@ -2050,8 +2057,8 @@ void AppMusicPlayer::build_ui()
     _avatar_img = lv_image_create(_stage_cont);
     if (_img_naruto_calm.data != nullptr) {
         lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        if (is_fix && _img_naruto_calm.header.h > 96) {
-            uint16_t scale = static_cast<uint16_t>((96 * 256) / _img_naruto_calm.header.h);
+        if (is_fix && _img_naruto_calm.header.h > 88) {
+            uint16_t scale = static_cast<uint16_t>((88 * 256) / _img_naruto_calm.header.h);
             lv_image_set_scale(_avatar_img, scale);
         }
     }
@@ -2060,7 +2067,7 @@ void AppMusicPlayer::build_ui()
     lv_obj_add_event_cb(_avatar_img, on_stage_avatar_click, LV_EVENT_CLICKED, this);
 
     _face_card = lv_obj_create(_stage_cont);
-    lv_obj_set_size(_face_card, 132, is_fix ? 84 : 96);
+    lv_obj_set_size(_face_card, 128, is_fix ? 78 : 96);
     lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, 0);
     style_flat_box(_face_card, COL_CARD, 18);
     lv_obj_set_style_border_width(_face_card, 2, 0);
@@ -2099,15 +2106,15 @@ void AppMusicPlayer::build_ui()
         lv_obj_set_pos(n, note_xs[i], 52);
     }
 
-    // Bottom 6-button bar: VOL- | << | > | >> | VOL+ | Settings
-    for (int i = 0; i < 6; ++i) {
+    // Bottom 4-button bar: << | > | >> | Settings (VOL-/VOL+ are in the top status bar)
+    for (int i = 0; i < 4; ++i) {
         const char* nm     = MAIN_BTN_NAMES[i];
         _main_btns[i].name = nm;
 
         lv_obj_t* btn     = lv_button_create(_main_cont);
         _main_btns[i].btn = btn;
-        lv_obj_set_pos(btn, BAR6_X0 + i * (BAR6_W + BAR6_GAP), BAR6_Y);
-        lv_obj_set_size(btn, BAR6_W, BAR6_H);
+        lv_obj_set_pos(btn, BAR4_X0 + i * (BAR4_W + BAR4_GAP), BAR4_Y);
+        lv_obj_set_size(btn, BAR4_W, BAR4_H);
         style_flat_box(btn, COL_CARD, 10);
         lv_obj_set_style_border_width(btn, 1, 0);
         lv_obj_set_style_border_color(btn, lv_color_hex(COL_CARD_HI), 0);
@@ -2116,11 +2123,7 @@ void AppMusicPlayer::build_ui()
         lv_obj_t* lbl       = lv_label_create(btn);
         _main_btns[i].label = lbl;
         lv_obj_center(lbl);
-        if (std::strcmp(nm, "voldn") == 0 || std::strcmp(nm, "volup") == 0) {
-            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
-        } else {
-            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-        }
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
 
         lv_obj_add_event_cb(
             btn,
@@ -2137,16 +2140,12 @@ void AppMusicPlayer::build_ui()
                 if (!nm) {
                     return;
                 }
-                if (std::strcmp(nm, "voldn") == 0) {
-                    self->change_volume(-VOLUME_STEP);
-                } else if (std::strcmp(nm, "prev") == 0) {
+                if (std::strcmp(nm, "prev") == 0) {
                     self->change_track(-1);
                 } else if (std::strcmp(nm, "play") == 0) {
                     self->toggle_play();
                 } else if (std::strcmp(nm, "next") == 0) {
                     self->change_track(1);
-                } else if (std::strcmp(nm, "volup") == 0) {
-                    self->change_volume(VOLUME_STEP);
                 } else if (std::strcmp(nm, "settings") == 0) {
                     self->switch_mode(ScreenMode::Settings);
                     return;
@@ -2244,7 +2243,7 @@ void AppMusicPlayer::build_ui()
 
     // Settings footer: AVATAR (left, above) | BACK (wide right)
     lv_obj_t* btn_cfg_back = lv_button_create(_settings_cont);
-    lv_obj_set_pos(btn_cfg_back, 164, 186);
+    lv_obj_set_pos(btn_cfg_back, 164, 188);
     lv_obj_set_size(btn_cfg_back, 148, 44);
     style_flat_box(btn_cfg_back, COL_PLAY_ON, 10);
     lv_obj_t* lbl_back = lv_label_create(btn_cfg_back);
@@ -2420,35 +2419,35 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     lv_obj_t* head_card = lv_obj_create(_head_cont);
-    lv_obj_set_pos(head_card, 20, top_y + 26);
-    lv_obj_set_size(head_card, 280, is_fix ? 136 : 150);
+    lv_obj_set_pos(head_card, 20, top_y + 24);
+    lv_obj_set_size(head_card, 280, is_fix ? 128 : 150);
     style_flat_box(head_card, COL_CARD, 12);
 
     lv_obj_t* lbl_obj_cap = lv_label_create(_head_cont);
-    lv_obj_set_pos(lbl_obj_cap, 56, top_y + 38);
+    lv_obj_set_pos(lbl_obj_cap, 56, top_y + 34);
     lv_obj_set_style_text_font(lbl_obj_cap, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_obj_cap, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(lbl_obj_cap, "TARGET");
 
     lv_obj_t* lbl_real_cap = lv_label_create(_head_cont);
-    lv_obj_set_pos(lbl_real_cap, 206, top_y + 38);
+    lv_obj_set_pos(lbl_real_cap, 206, top_y + 34);
     lv_obj_set_style_text_font(lbl_real_cap, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_real_cap, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(lbl_real_cap, "ACTUAL");
 
     _lbl_head_target = lv_label_create(_head_cont);
-    lv_obj_set_pos(_lbl_head_target, 64, top_y + 56);
+    lv_obj_set_pos(_lbl_head_target, 64, top_y + 50);
     lv_obj_set_style_text_font(_lbl_head_target, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_head_target, lv_color_hex(COL_YELLOW), 0);
 
     _lbl_head_real = lv_label_create(_head_cont);
-    lv_obj_set_pos(_lbl_head_real, 206, top_y + 56);
+    lv_obj_set_pos(_lbl_head_real, 206, top_y + 50);
     lv_obj_set_style_text_font(_lbl_head_real, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(_lbl_head_real, lv_color_hex(COL_TEXT), 0);
 
     _btn_head_minus = lv_button_create(_head_cont);
-    lv_obj_set_pos(_btn_head_minus, 36, top_y + 98);
-    lv_obj_set_size(_btn_head_minus, 84, 52);
+    lv_obj_set_pos(_btn_head_minus, 36, top_y + 90);
+    lv_obj_set_size(_btn_head_minus, 84, 50);
     style_flat_box(_btn_head_minus, COL_CARD_HI, 10);
     lv_obj_t* lbl_minus = lv_label_create(_btn_head_minus);
     lv_obj_center(lbl_minus);
@@ -2466,8 +2465,8 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     _btn_head_plus = lv_button_create(_head_cont);
-    lv_obj_set_pos(_btn_head_plus, 200, top_y + 98);
-    lv_obj_set_size(_btn_head_plus, 84, 52);
+    lv_obj_set_pos(_btn_head_plus, 200, top_y + 90);
+    lv_obj_set_size(_btn_head_plus, 84, 50);
     style_flat_box(_btn_head_plus, COL_CARD_HI, 10);
     lv_obj_t* lbl_plus = lv_label_create(_btn_head_plus);
     lv_obj_center(lbl_plus);
@@ -2653,36 +2652,36 @@ void AppMusicPlayer::build_ui()
         LV_EVENT_CLICKED, this);
 
     _web_qr_box = lv_obj_create(_web_cont);
-    lv_obj_set_pos(_web_qr_box, 12, top_y + 26);
-    lv_obj_set_size(_web_qr_box, 126, 126);
+    lv_obj_set_pos(_web_qr_box, 12, top_y + 24);
+    lv_obj_set_size(_web_qr_box, 120, 120);
     style_flat_box(_web_qr_box, COL_WHITE, 8);
     lv_obj_add_flag(_web_qr_box, LV_OBJ_FLAG_HIDDEN);
 
     _web_qr = lv_qrcode_create(_web_qr_box);
-    lv_qrcode_set_size(_web_qr, 114);
+    lv_qrcode_set_size(_web_qr, 108);
     lv_qrcode_set_dark_color(_web_qr, lv_color_hex(0x000000));
     lv_qrcode_set_light_color(_web_qr, lv_color_hex(0xFFFFFF));
     lv_obj_center(_web_qr);
 
     _lbl_web_status = lv_label_create(_web_cont);
-    lv_obj_set_pos(_lbl_web_status, 150, top_y + 28);
-    lv_obj_set_width(_lbl_web_status, 162);
+    lv_obj_set_pos(_lbl_web_status, 144, top_y + 26);
+    lv_obj_set_width(_lbl_web_status, 168);
     lv_label_set_long_mode(_lbl_web_status, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(_lbl_web_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_web_status, lv_color_hex(COL_YELLOW), 0);
     lv_label_set_text(_lbl_web_status, "Starting Wi-Fi...");
 
     _lbl_web_url = lv_label_create(_web_cont);
-    lv_obj_set_pos(_lbl_web_url, 150, top_y + 54);
-    lv_obj_set_width(_lbl_web_url, 162);
+    lv_obj_set_pos(_lbl_web_url, 144, top_y + 50);
+    lv_obj_set_width(_lbl_web_url, 168);
     lv_label_set_long_mode(_lbl_web_url, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(_lbl_web_url, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_web_url, lv_color_hex(COL_WHITE), 0);
     lv_label_set_text(_lbl_web_url, "");
 
     _lbl_web_hint = lv_label_create(_web_cont);
-    lv_obj_set_pos(_lbl_web_hint, 150, top_y + 82);
-    lv_obj_set_width(_lbl_web_hint, 162);
+    lv_obj_set_pos(_lbl_web_hint, 144, top_y + 76);
+    lv_obj_set_width(_lbl_web_hint, 168);
     lv_label_set_long_mode(_lbl_web_hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(_lbl_web_hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_web_hint, lv_color_hex(COL_DIM), 0);
@@ -2849,7 +2848,7 @@ void AppMusicPlayer::refresh_battery_ui()
 void AppMusicPlayer::refresh_button_styles()
 {
     bool is_playing = _playing.load();
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 4; ++i) {
         const char* nm = _main_btns[i].name;
         lv_obj_t* btn  = _main_btns[i].btn;
         lv_obj_t* lbl  = _main_btns[i].label;
@@ -2861,9 +2860,7 @@ void AppMusicPlayer::refresh_button_styles()
         uint32_t txt_col = COL_TEXT;
         const char* text = "";
 
-        if (std::strcmp(nm, "voldn") == 0) {
-            text = "VOL-";
-        } else if (std::strcmp(nm, "prev") == 0) {
+        if (std::strcmp(nm, "prev") == 0) {
             text = LV_SYMBOL_PREV;
         } else if (std::strcmp(nm, "play") == 0) {
             bg_col  = is_playing ? COL_PLAY_ON : COL_CARD;
@@ -2871,8 +2868,6 @@ void AppMusicPlayer::refresh_button_styles()
             text    = is_playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY;
         } else if (std::strcmp(nm, "next") == 0) {
             text = LV_SYMBOL_NEXT;
-        } else if (std::strcmp(nm, "volup") == 0) {
-            text = "VOL+";
         } else if (std::strcmp(nm, "settings") == 0) {
             text = LV_SYMBOL_SETTINGS;
         }
