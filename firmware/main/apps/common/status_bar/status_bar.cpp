@@ -6,6 +6,7 @@
 #include "status_bar.h"
 #include <mooncake.h>
 #include <mooncake_log.h>
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -27,6 +28,10 @@ namespace {
 
 constexpr const char* kStatusBarNvsNs  = "ui_prefs";
 constexpr const char* kStatusBarNvsKey = "sb_mode";
+constexpr int kStatusBarHeight         = 38;
+constexpr int kVolumeStep              = 10;
+constexpr uint32_t kVolPopupDurationMs = 1500;
+
 std::atomic<int> s_cached_sb_mode{-1};
 std::function<void(void)> s_pending_home_cb;
 
@@ -49,8 +54,8 @@ public:
         _is_tracking    = false;
         _last_state     = LV_INDEV_STATE_REL;
         _screen_height  = 240;
-        _top_threshold  = 20;  // Within 20 px from top edge
-        _swipe_min_dist = 50;  // Swipe down at least 50 px
+        _top_threshold  = 24;  // Within 24 px from top edge
+        _swipe_min_dist = 45;  // Swipe down at least 45 px
     }
 
     void update()
@@ -115,14 +120,28 @@ public:
         _label = std::make_unique<Label>(parent);
         _label->setText("");
         _label->setTextColor(lv_color_hex(colorText));
-        _label->setTextFont(&lv_font_montserrat_16);
-        _label->align(LV_ALIGN_CENTER, -14, 0);
+        _label->setTextFont(&lv_font_montserrat_14);
+        _label->align(LV_ALIGN_LEFT_MID, 32, 0);
+        lv_obj_remove_flag(_label->get(), LV_OBJ_FLAG_CLICKABLE);
 
         update();
     }
 
+    void showTemporaryText(const std::string& txt, uint32_t until_ms)
+    {
+        _override_until = until_ms;
+        _label->setText(txt);
+    }
+
     void update() override
     {
+        if (_override_until != 0) {
+            if (static_cast<int32_t>(GetHAL().millis() - _override_until) < 0) {
+                return;
+            }
+            _override_until = 0;
+        }
+
         auto now   = std::chrono::system_clock::now();
         auto now_t = std::chrono::system_clock::to_time_t(now);
 
@@ -134,11 +153,12 @@ public:
             hour12 = 12;
         }
 
-        _label->setText(fmt::format("{}:{:02d} {}", hour12, local_tm.tm_min, local_tm.tm_hour >= 12 ? "PM" : "AM"));
+        _label->setText(fmt::format("{}:{:02d}{}", hour12, local_tm.tm_min, local_tm.tm_hour >= 12 ? "P" : "A"));
     }
 
 private:
     std::unique_ptr<Label> _label;
+    uint32_t _override_until = 0;
 };
 
 class BatteryIcon {
@@ -151,14 +171,15 @@ public:
         _bat_top->setBgColor(lv_color_hex(colorSecondary));
         _bat_top->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
         _bat_top->setBorderWidth(0);
-        _bat_top->setSize(4, 4);
-        _bat_top->setRadius(4);
+        _bat_top->setSize(3, 4);
+        _bat_top->setRadius(2);
         _bat_top->setOutlineWidth(1);
         _bat_top->setOutlineColor(lv_color_hex(colorPrimary));
+        lv_obj_remove_flag(_bat_top->get(), LV_OBJ_FLAG_CLICKABLE);
 
         _bar = std::make_unique<uitk::lvgl_cpp::Bar>(parent);
-        _bar->setSize(30, 12);
-        _bar->setRadius(4);
+        _bar->setSize(24, 12);
+        _bar->setRadius(3);
         _bar->setRadius(0, LV_PART_INDICATOR);
         _bar->setBgColor(lv_color_hex(colorSecondary));
         _bar->setBgColor(lv_color_hex(colorPrimary), LV_PART_INDICATOR);
@@ -168,7 +189,8 @@ public:
         _bar->setPadding(1, 1, 1, 1);
         _bar->setOutlineWidth(1);
         _bar->setOutlineColor(lv_color_hex(colorPrimary));
-        _bar->setRadius(3, LV_PART_INDICATOR);
+        _bar->setRadius(2, LV_PART_INDICATOR);
+        lv_obj_remove_flag(_bar->get(), LV_OBJ_FLAG_CLICKABLE);
 
         _lightning_icon     = std::make_unique<uitk::lvgl_cpp::Image>(parent);
         _icon_bat_lightning = assets::get_image("icon_bat_lightning.bin");
@@ -176,12 +198,13 @@ public:
         _lightning_icon->setImageRecolor(lv_color_hex(colorPrimary));
         _lightning_icon->setImageRecolorOpa(LV_OPA_COVER);
         _lightning_icon->setHidden(true);
+        lv_obj_remove_flag(_lightning_icon->get(), LV_OBJ_FLAG_CLICKABLE);
     }
 
     void align(lv_align_t align, int32_t x_ofs, int32_t y_ofs)
     {
         _bar->align(align, x_ofs, y_ofs);
-        lv_obj_align_to(_bat_top->get(), _bar->get(), LV_ALIGN_CENTER, 15, 0);
+        lv_obj_align_to(_bat_top->get(), _bar->get(), LV_ALIGN_CENTER, 13, 0);
         lv_obj_align_to(_lightning_icon->get(), _bar->get(), LV_ALIGN_CENTER, 0, 0);
     }
 
@@ -217,11 +240,12 @@ public:
         _label_level = std::make_unique<Label>(parent);
         _label_level->setText("");
         _label_level->setTextColor(lv_color_hex(colorPrimary));
-        _label_level->setTextFont(&lv_font_montserrat_14);
-        _label_level->align(LV_ALIGN_RIGHT_MID, -79, 0);
+        _label_level->setTextFont(&lv_font_montserrat_12);
+        _label_level->align(LV_ALIGN_LEFT_MID, 90, 0);
+        lv_obj_remove_flag(_label_level->get(), LV_OBJ_FLAG_CLICKABLE);
 
         _battery_icon = std::make_unique<BatteryIcon>(parent, colorSecondary, colorPrimary);
-        _battery_icon->align(LV_ALIGN_RIGHT_MID, -45, 0);
+        _battery_icon->align(LV_ALIGN_LEFT_MID, 128, 0);
 
         update();
     }
@@ -244,9 +268,10 @@ public:
     Wifi(lv_obj_t* parent, uint32_t colorPrimary)
     {
         _wifi_icon = std::make_unique<Image>(parent);
-        _wifi_icon->align(LV_ALIGN_LEFT_MID, 10, 0);
+        _wifi_icon->align(LV_ALIGN_LEFT_MID, 6, 0);
         _wifi_icon->setImageRecolor(lv_color_hex(colorPrimary));
         _wifi_icon->setImageRecolorOpa(LV_OPA_COVER);
+        lv_obj_remove_flag(_wifi_icon->get(), LV_OBJ_FLAG_CLICKABLE);
 
         _icon_wifi_low    = assets::get_image("icon_wifi_low.bin");
         _icon_wifi_medium = assets::get_image("icon_wifi_medium.bin");
@@ -286,87 +311,118 @@ private:
     lv_image_dsc_t _icon_wifi_slash;
 };
 
-class HomeExitButton {
+/**
+ * @brief Seamless borderless action button integrated directly into the 38px top bar.
+ * Uses LV_EVENT_CLICKED with extended click area and pressed highlight feedback.
+ */
+class BarActionButton {
 public:
-    HomeExitButton(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary)
+    BarActionButton(lv_obj_t* parent, int x_pos, int width, uint32_t colorPrimary, const char* symbolText,
+                    bool useHomeIcon, std::function<void()> onClickCb)
+        : _on_click(std::move(onClickCb))
     {
-        _btn = std::make_unique<Container>(parent);
-        _btn->setSize(34, 24);
-        _btn->align(LV_ALIGN_RIGHT_MID, -3, 0);
-        _btn->setRadius(7);
-        _btn->setBgColor(lv_color_hex(colorPrimary));
-        _btn->setBgOpa(36);
-        _btn->setBorderWidth(1);
-        _btn->setBorderColor(lv_color_hex(colorPrimary));
-        _btn->setPadding(0, 0, 0, 0);
-        _btn->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
-        _btn->addFlag(LV_OBJ_FLAG_CLICKABLE);
-        _btn->onClick().connect([this]() { _is_clicked = true; });
+        _btn = lv_obj_create(parent);
+        lv_obj_set_pos(_btn, x_pos, 0);
+        lv_obj_set_size(_btn, width, kStatusBarHeight);
+        lv_obj_set_style_bg_color(_btn, lv_color_hex(colorPrimary), 0);
+        lv_obj_set_style_bg_opa(_btn, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_color(_btn, lv_color_hex(colorPrimary), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(_btn, 52, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(_btn, 0, 0);
+        lv_obj_set_style_outline_width(_btn, 0, 0);
+        lv_obj_set_style_shadow_width(_btn, 0, 0);
+        lv_obj_set_style_radius(_btn, 8, 0);
+        lv_obj_set_style_pad_all(_btn, 0, 0);
+        lv_obj_remove_flag(_btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(_btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(_btn, 8);
 
-        _icon_home = assets::get_image("icon_home.bin");
-        if (_icon_home.data != nullptr && _icon_home.data_size > 0) {
-            _icon = std::make_unique<Image>(_btn->get());
-            _icon->setSrc(&_icon_home);
-            _icon->setImageRecolorOpa(LV_OPA_COVER);
-            _icon->setImageRecolor(lv_color_hex(colorPrimary));
-            if (_icon_home.header.h > 20) {
-                uint16_t scale = static_cast<uint16_t>((18 * 256) / _icon_home.header.h);
-                lv_image_set_scale(_icon->get(), scale);
+        if (useHomeIcon) {
+            _icon_home = assets::get_image("icon_home.bin");
+        }
+
+        if (useHomeIcon && _icon_home.data != nullptr && _icon_home.data_size > 0) {
+            lv_obj_t* img = lv_image_create(_btn);
+            lv_image_set_src(img, &_icon_home);
+            lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+            lv_obj_set_style_image_recolor(img, lv_color_hex(colorPrimary), 0);
+            if (_icon_home.header.h > 26) {
+                uint16_t scale = static_cast<uint16_t>((24 * 256) / _icon_home.header.h);
+                lv_image_set_scale(img, scale);
             }
-            _icon->align(LV_ALIGN_CENTER, 0, 0);
-            _icon->removeFlag(LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_center(img);
+            lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(img, LV_OBJ_FLAG_EVENT_BUBBLE);
         } else {
-            _label = std::make_unique<Label>(_btn->get());
-            _label->setText(LV_SYMBOL_HOME);
-            _label->setTextFont(&lv_font_montserrat_16);
-            _label->setTextColor(lv_color_hex(colorPrimary));
-            _label->align(LV_ALIGN_CENTER, 0, 0);
-            _label->removeFlag(LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_t* lbl = lv_label_create(_btn);
+            lv_label_set_text(lbl, symbolText);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(colorPrimary), 0);
+            lv_obj_center(lbl);
+            lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
         }
-        (void)colorSecondary;
-    }
 
-    bool consumeClick()
-    {
-        if (_is_clicked) {
-            _is_clicked = false;
-            return true;
-        }
-        return false;
+        lv_obj_add_event_cb(
+            _btn,
+            [](lv_event_t* e) {
+                auto* self = static_cast<BarActionButton*>(lv_event_get_user_data(e));
+                if (self && self->_on_click) {
+                    self->_on_click();
+                }
+            },
+            LV_EVENT_CLICKED, this);
     }
 
 private:
-    std::unique_ptr<Container> _btn;
-    std::unique_ptr<Image> _icon;
-    std::unique_ptr<Label> _label;
+    lv_obj_t* _btn            = nullptr;
     lv_image_dsc_t _icon_home = {};
-    bool _is_clicked          = false;
+    std::function<void()> _on_click;
 };
 
 class StatusBarView {
 public:
+    std::function<void()> onHomeClicked;
+
     StatusBarView(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary, bool fixedMode)
         : _fixed_mode(fixedMode)
     {
         (void)parent;
-        _panel = std::make_unique<uitk::lvgl_cpp::Container>(lv_screen_active());
+        // Place the status bar on lv_layer_top() so no screen or modal container created
+        // on lv_screen_active() can ever cover or block touch events on VOL-, VOL+, or Home!
+        _panel = std::make_unique<uitk::lvgl_cpp::Container>(lv_layer_top());
         _panel->setBgColor(lv_color_hex(colorSecondary));
+        _panel->setBgOpa(LV_OPA_COVER);
         _panel->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
         _panel->align(LV_ALIGN_TOP_MID, 0, 0);
         _panel->setBorderWidth(0);
-        _panel->setSize(320, 28);
+        _panel->setSize(320, kStatusBarHeight);
         _panel->setRadius(0);
         _panel->setPadding(0, 0, 0, 0);
-        _panel->onClick().connect([this]() {
-            if (!_fixed_mode) {
-                hide();
-            }
-        });
 
-        _widgets.push_back(std::make_unique<TimeLabel>(_panel->get(), colorPrimary));
+        auto time_widget = std::make_unique<TimeLabel>(_panel->get(), colorPrimary);
+        _time_label_ptr  = time_widget.get();
+        _widgets.push_back(std::move(time_widget));
         _widgets.push_back(std::make_unique<Battery>(_panel->get(), colorSecondary, colorPrimary));
         _widgets.push_back(std::make_unique<Wifi>(_panel->get(), colorPrimary));
-        _home_btn = std::make_unique<HomeExitButton>(_panel->get(), colorSecondary, colorPrimary);
+
+        // Right-side borderless touch buttons:
+        // [x=162..212 (50px): VOL-]  [x=214..264 (50px): VOL+]  [x=266..320 (54px): HOME]
+        _btn_vol_dn = std::make_unique<BarActionButton>(
+            _panel->get(), 162, 50, colorPrimary, LV_SYMBOL_VOLUME_MID "-", false,
+            [this]() { adjust_global_volume(-kVolumeStep); });
+
+        _btn_vol_up = std::make_unique<BarActionButton>(
+            _panel->get(), 214, 50, colorPrimary, LV_SYMBOL_VOLUME_MAX "+", false,
+            [this]() { adjust_global_volume(+kVolumeStep); });
+
+        _btn_home = std::make_unique<BarActionButton>(
+            _panel->get(), 266, 54, colorPrimary, LV_SYMBOL_HOME, true, [this]() {
+                _home_clicked = true;
+                if (onHomeClicked) {
+                    onHomeClicked();
+                }
+            });
 
         int init_y = _fixed_mode ? _pos_y_show : _pos_y_hide;
         _panel->setPos(0, init_y);
@@ -377,9 +433,7 @@ public:
 
     void update()
     {
-        if (_fixed_mode) {
-            _panel->moveForeground();
-        } else {
+        if (!_fixed_mode) {
             _pos_y_anim.update();
             if (!_pos_y_anim.done()) {
                 _panel->setPos(0, _pos_y_anim.directValue());
@@ -391,7 +445,7 @@ public:
             }
         }
 
-        if (GetHAL().millis() - _last_update_tick > 1000) {
+        if (GetHAL().millis() - _last_update_tick > 500) {
             _last_update_tick = GetHAL().millis();
             for (auto& widget : _widgets) {
                 widget->update();
@@ -427,29 +481,58 @@ public:
         return _is_hidden;
     }
 
+    bool consumeActionTouch()
+    {
+        if (_action_touched) {
+            _action_touched = false;
+            return true;
+        }
+        return false;
+    }
+
     bool consumeHomeClick()
     {
-        return _home_btn && _home_btn->consumeClick();
+        if (_home_clicked) {
+            _home_clicked = false;
+            return true;
+        }
+        return false;
     }
 
 private:
     const int _pos_y_show = 0;
-    const int _pos_y_hide = -28;
+    const int _pos_y_hide = -kStatusBarHeight;
 
-    bool _fixed_mode = true;
+    bool _fixed_mode        = true;
+    bool _home_clicked      = false;
+    bool _action_touched    = false;
+    TimeLabel* _time_label_ptr = nullptr;
     std::unique_ptr<Container> _panel;
     std::vector<std::unique_ptr<Widget>> _widgets;
-    std::unique_ptr<HomeExitButton> _home_btn;
+    std::unique_ptr<BarActionButton> _btn_vol_dn;
+    std::unique_ptr<BarActionButton> _btn_vol_up;
+    std::unique_ptr<BarActionButton> _btn_home;
     AnimateValue _pos_y_anim;
     bool _is_hidden            = false;
     bool _hide_panel_flag      = false;
     uint32_t _last_update_tick = 0;
+
+    void adjust_global_volume(int delta)
+    {
+        _action_touched = true;
+        int cur  = static_cast<int>(GetHAL().getSpeakerVolume());
+        int next = std::clamp(cur + delta, 0, 100);
+        GetHAL().setSpeakerVolume(static_cast<uint8_t>(next), true);
+        if (_time_label_ptr) {
+            _time_label_ptr->showTemporaryText(fmt::format("VOL {}%", next), GetHAL().millis() + kVolPopupDurationMs);
+        }
+    }
 };
 
 }  // namespace status_bar_view
 
 /**
- * @brief StatusBar controller supporting Fixed and AutoHide modes + Home button.
+ * @brief StatusBar controller supporting Fixed and AutoHide modes + VOL-/VOL+/Home buttons.
  *
  */
 class StatusBar {
@@ -458,8 +541,8 @@ public:
 
     void init(lv_obj_t* parent, uint32_t colorSecondary, uint32_t colorPrimary, std::function<void(void)> homeCb)
     {
-        onGoHome        = std::move(homeCb);
-        _fixed_mode     = (view::get_status_bar_mode() == view::StatusBarMode::Fixed);
+        onGoHome    = std::move(homeCb);
+        _fixed_mode = (view::get_status_bar_mode() == view::StatusBarMode::Fixed);
 
         _status_bar_gesture            = std::make_unique<StatuBarGesture>();
         _status_bar_gesture->onGesture = [&]() { handle_gesture(); };
@@ -467,6 +550,15 @@ public:
 
         _status_bar_view =
             std::make_unique<status_bar_view::StatusBarView>(parent, colorSecondary, colorPrimary, _fixed_mode);
+        _status_bar_view->onHomeClicked = [this]() {
+            if (_home_dispatched) {
+                return;
+            }
+            _home_dispatched = true;
+            if (onGoHome) {
+                onGoHome();
+            }
+        };
         _status_bar_view->show();
         _status_bar_show_tick = GetHAL().millis();
         _is_first_show        = true;
@@ -478,10 +570,14 @@ public:
             _status_bar_gesture->update();
         }
         _status_bar_view->update();
+        if (_status_bar_view->consumeActionTouch()) {
+            _status_bar_show_tick = GetHAL().millis();
+        }
         if (!_fixed_mode) {
             update_visibility();
         }
-        if (_status_bar_view->consumeHomeClick()) {
+        if (_status_bar_view->consumeHomeClick() && !_home_dispatched) {
+            _home_dispatched = true;
             if (onGoHome) {
                 onGoHome();
             }
@@ -489,7 +585,8 @@ public:
     }
 
 private:
-    bool _fixed_mode = true;
+    bool _fixed_mode      = true;
+    bool _home_dispatched = false;
     std::unique_ptr<StatuBarGesture> _status_bar_gesture;
     std::unique_ptr<status_bar_view::StatusBarView> _status_bar_view;
     uint32_t _status_bar_show_tick = 0;
@@ -504,7 +601,7 @@ private:
     void update_visibility()
     {
         if (!_status_bar_view->isHidden()) {
-            if (GetHAL().millis() - _status_bar_show_tick > (_is_first_show ? 1800 : 6000)) {
+            if (GetHAL().millis() - _status_bar_show_tick > (_is_first_show ? 2200 : 6000)) {
                 _is_first_show = false;
                 _status_bar_view->hide();
             }
@@ -552,7 +649,7 @@ void set_status_bar_mode(StatusBarMode mode)
 
 int get_status_bar_top_offset()
 {
-    return (get_status_bar_mode() == StatusBarMode::Fixed) ? 28 : 0;
+    return (get_status_bar_mode() == StatusBarMode::Fixed) ? kStatusBarHeight : 0;
 }
 
 void create_status_bar(uint32_t colorSecondary, uint32_t colorPrimary, lv_obj_t* parent,

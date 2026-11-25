@@ -1565,8 +1565,8 @@ void AppGemini::build_ui()
     _avatar_img = lv_image_create(_stage_cont);
     if (_img_naruto_calm.data != nullptr) {
         lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        if (is_fix && _img_naruto_calm.header.h > 92) {
-            uint16_t scale = static_cast<uint16_t>((92 * 256) / _img_naruto_calm.header.h);
+        if (is_fix && _img_naruto_calm.header.h > 82) {
+            uint16_t scale = static_cast<uint16_t>((82 * 256) / _img_naruto_calm.header.h);
             lv_image_set_scale(_avatar_img, scale);
         }
     }
@@ -1575,7 +1575,7 @@ void AppGemini::build_ui()
     lv_obj_add_event_cb(_avatar_img, on_stage_click, LV_EVENT_CLICKED, this);
 
     _face_card = lv_obj_create(_stage_cont);
-    lv_obj_set_size(_face_card, 142, is_fix ? 84 : 98);
+    lv_obj_set_size(_face_card, 136, is_fix ? 76 : 98);
     lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, 0);
     style_flat_box(_face_card, COL_CARD, 18);
     lv_obj_set_style_border_width(_face_card, 2, 0);
@@ -1639,7 +1639,8 @@ void AppGemini::build_ui()
     lv_obj_set_style_text_color(_lbl_subtitle, lv_color_hex(COL_TEXT), 0);
     lv_label_set_text(_lbl_subtitle, "Starting...");
 
-    // Bottom 4-button control bar (y = 190 .. 234): VOL- | MUTE/STOP | VOL+ | Settings (Exit is in top status bar)
+    // Bottom 2-button control bar (y = 190 .. 234): TALK/MUTE/STOP | Settings
+    // (VOL-, VOL+, and Home are integrated in the 38px top status bar)
     auto make_btn = [&](lv_obj_t* parent, int x, int y, int w, int h, uint32_t bg, const char* txt,
                         const lv_font_t* font) -> lv_obj_t* {
         lv_obj_t* b = lv_button_create(parent);
@@ -1656,17 +1657,13 @@ void AppGemini::build_ui()
         return b;
     };
 
-    _btn_vol_dn = make_btn(_root_cont, 8, 190, 56, 44, COL_CARD, "VOL-", &lv_font_montserrat_12);
-    lv_obj_add_event_cb(
-        _btn_vol_dn,
-        [](lv_event_t* e) {
-            static_cast<AppGemini*>(lv_event_get_user_data(e))->change_volume(-VOLUME_STEP);
-        },
-        LV_EVENT_CLICKED, this);
+    _btn_vol_dn = nullptr;
+    _btn_vol_up = nullptr;
+    _btn_exit   = nullptr;
 
     _btn_primary = lv_button_create(_root_cont);
-    lv_obj_set_pos(_btn_primary, 70, 190);
-    lv_obj_set_size(_btn_primary, 122, 44);
+    lv_obj_set_pos(_btn_primary, 8, 190);
+    lv_obj_set_size(_btn_primary, 218, 44);
     style_flat_box(_btn_primary, COL_GEMINI_BLUE, 12);
     _lbl_primary = lv_label_create(_btn_primary);
     lv_obj_center(_lbl_primary);
@@ -1680,22 +1677,13 @@ void AppGemini::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_vol_up = make_btn(_root_cont, 198, 190, 56, 44, COL_CARD, "VOL+", &lv_font_montserrat_12);
-    lv_obj_add_event_cb(
-        _btn_vol_up,
-        [](lv_event_t* e) {
-            static_cast<AppGemini*>(lv_event_get_user_data(e))->change_volume(VOLUME_STEP);
-        },
-        LV_EVENT_CLICKED, this);
-
-    _btn_settings = make_btn(_root_cont, 260, 190, 52, 44, COL_CARD, LV_SYMBOL_SETTINGS, &lv_font_montserrat_16);
+    _btn_settings = make_btn(_root_cont, 234, 190, 78, 44, COL_CARD, LV_SYMBOL_SETTINGS " VOICE", &lv_font_montserrat_12);
     lv_obj_add_event_cb(
         _btn_settings,
         [](lv_event_t* e) {
             static_cast<AppGemini*>(lv_event_get_user_data(e))->open_settings();
         },
         LV_EVENT_CLICKED, this);
-    _btn_exit = nullptr;
 
     /* ====================== SETTINGS OVERLAY (VOICE & PITCH) ====================== */
     _settings_cont = lv_obj_create(_root_cont);
@@ -1705,8 +1693,8 @@ void AppGemini::build_ui()
     lv_obj_add_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* lbl_shdr = lv_label_create(_settings_cont);
-    lv_obj_set_pos(lbl_shdr, 10, top_y + 4);
-    lv_obj_set_size(lbl_shdr, 240, 22);
+    lv_obj_set_pos(lbl_shdr, 10, top_y + 2);
+    lv_obj_set_size(lbl_shdr, 240, 20);
     lv_obj_set_style_text_font(lbl_shdr, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_shdr, lv_color_hex(COL_GEMINI_BLUE), 0);
     lv_label_set_text(lbl_shdr, "< VOICE & PITCH");
@@ -1719,10 +1707,11 @@ void AppGemini::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Row 1: Voice selector (< | VOICE | >)
-    const int v_cap_y = top_y + (is_fix ? 26 : 38);
-    const int v_row_y = top_y + (is_fix ? 42 : 54);
-    const int p_cap_y = top_y + (is_fix ? 92 : 108);
-    const int p_row_y = top_y + (is_fix ? 108 : 124);
+    const int v_cap_y = top_y + (is_fix ? 23 : 38);
+    const int v_row_y = top_y + (is_fix ? 38 : 54);
+    const int p_cap_y = top_y + (is_fix ? 86 : 108);
+    const int p_row_y = top_y + (is_fix ? 101 : 124);
+    const int vp_h    = is_fix ? 42 : 44;
 
     lv_obj_t* lbl_vcap = lv_label_create(_settings_cont);
     lv_obj_set_pos(lbl_vcap, 12, v_cap_y);
@@ -1730,7 +1719,7 @@ void AppGemini::build_ui()
     lv_obj_set_style_text_color(lbl_vcap, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(lbl_vcap, "VOICE");
 
-    lv_obj_t* btn_vprev = make_btn(_settings_cont, 10, v_row_y, 52, 44, COL_CARD_HI, LV_SYMBOL_LEFT, &lv_font_montserrat_16);
+    lv_obj_t* btn_vprev = make_btn(_settings_cont, 10, v_row_y, 52, vp_h, COL_CARD_HI, LV_SYMBOL_LEFT, &lv_font_montserrat_16);
     lv_obj_add_event_cb(
         btn_vprev,
         [](lv_event_t* e) {
@@ -1740,7 +1729,7 @@ void AppGemini::build_ui()
 
     lv_obj_t* vcard = lv_obj_create(_settings_cont);
     lv_obj_set_pos(vcard, 68, v_row_y);
-    lv_obj_set_size(vcard, 184, 44);
+    lv_obj_set_size(vcard, 184, vp_h);
     style_flat_box(vcard, COL_CARD, 10);
     _lbl_voice_val = lv_label_create(vcard);
     lv_obj_center(_lbl_voice_val);
@@ -1749,7 +1738,7 @@ void AppGemini::build_ui()
     lv_obj_set_style_text_color(_lbl_voice_val, lv_color_hex(COL_WHITE), 0);
 
     lv_obj_t* btn_vnext =
-        make_btn(_settings_cont, 258, v_row_y, 52, 44, COL_CARD_HI, LV_SYMBOL_RIGHT, &lv_font_montserrat_16);
+        make_btn(_settings_cont, 258, v_row_y, 52, vp_h, COL_CARD_HI, LV_SYMBOL_RIGHT, &lv_font_montserrat_16);
     lv_obj_add_event_cb(
         btn_vnext,
         [](lv_event_t* e) {
@@ -1764,7 +1753,7 @@ void AppGemini::build_ui()
     lv_obj_set_style_text_color(lbl_pcap, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(lbl_pcap, "PITCH (LIVE)");
 
-    lv_obj_t* btn_pdn = make_btn(_settings_cont, 10, p_row_y, 52, 44, COL_CARD_HI, "-", &lv_font_montserrat_20);
+    lv_obj_t* btn_pdn = make_btn(_settings_cont, 10, p_row_y, 52, vp_h, COL_CARD_HI, "-", &lv_font_montserrat_20);
     lv_obj_add_event_cb(
         btn_pdn,
         [](lv_event_t* e) {
@@ -1774,7 +1763,7 @@ void AppGemini::build_ui()
 
     lv_obj_t* pcard = lv_obj_create(_settings_cont);
     lv_obj_set_pos(pcard, 68, p_row_y);
-    lv_obj_set_size(pcard, 184, 44);
+    lv_obj_set_size(pcard, 184, vp_h);
     style_flat_box(pcard, COL_CARD, 10);
     _lbl_pitch_val = lv_label_create(pcard);
     lv_obj_center(_lbl_pitch_val);
@@ -1782,7 +1771,7 @@ void AppGemini::build_ui()
     lv_obj_set_style_text_font(_lbl_pitch_val, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_pitch_val, lv_color_hex(COL_WHITE), 0);
 
-    lv_obj_t* btn_pup = make_btn(_settings_cont, 258, p_row_y, 52, 44, COL_CARD_HI, "+", &lv_font_montserrat_20);
+    lv_obj_t* btn_pup = make_btn(_settings_cont, 258, p_row_y, 52, vp_h, COL_CARD_HI, "+", &lv_font_montserrat_20);
     lv_obj_add_event_cb(
         btn_pup,
         [](lv_event_t* e) {
@@ -1792,7 +1781,7 @@ void AppGemini::build_ui()
 
     // Bottom Apply & Back button
     lv_obj_t* btn_sback =
-        make_btn(_settings_cont, 50, 190, 220, 40, COL_GEMINI_BLUE, "APPLY & BACK", &lv_font_montserrat_14);
+        make_btn(_settings_cont, 50, 190, 220, 42, COL_GEMINI_BLUE, "APPLY & BACK", &lv_font_montserrat_14);
     lv_obj_add_event_cb(
         btn_sback,
         [](lv_event_t* e) {
@@ -1840,7 +1829,8 @@ void AppGemini::refresh_ui(uint32_t now)
 
     SessionState st = static_cast<SessionState>(_state.load());
 
-    // Top right: speaker volume (battery is already in the system status bar)
+    // Top right: speaker volume synchronized with the top status bar
+    _volume = std::clamp(static_cast<int>(GetHAL().getSpeakerVolume()), 0, 100);
     char vbuf[24];
     std::snprintf(vbuf, sizeof(vbuf), "VOL %d%%", _volume);
     lv_label_set_text(_lbl_vol_batt, vbuf);

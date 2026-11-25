@@ -281,7 +281,7 @@ private:
         lv_obj_t* btn    = nullptr;
         lv_obj_t* label  = nullptr;
     };
-    BtnWidget _main_btns[6];
+    BtnWidget _main_btns[4];
 
     // 2. Settings view
     lv_obj_t* _settings_cont  = nullptr;

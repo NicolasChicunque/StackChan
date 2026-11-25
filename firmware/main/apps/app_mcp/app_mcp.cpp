@@ -275,6 +275,15 @@ void AppMcp::onRunning()
 
     {
         LvglLockGuard lock;
+        int hal_vol = static_cast<int>(GetHAL().getSpeakerVolume());
+        if (hal_vol != _volume.load()) {
+            _volume = hal_vol;
+            Settings s(NVS_NS, true);
+            s.SetInt(KEY_VOL, hal_vol);
+            if (_settings_open) {
+                refresh_settings_ui();
+            }
+        }
         if (now - _last_anim_tick >= 90) {
             _last_anim_tick = now;
             refresh_avatar_anim(now);
@@ -846,9 +855,9 @@ void AppMcp::toggle_auto_mode()
 
 void AppMcp::change_volume(int delta)
 {
-    int v   = std::clamp(_volume.load() + delta, 10, 100);
+    int v   = std::clamp(_volume.load() + delta, 0, 100);
     _volume = v;
-    GetHAL().setSpeakerVolume(static_cast<uint8_t>(v), false);
+    GetHAL().setSpeakerVolume(static_cast<uint8_t>(v), true);
     Settings s(NVS_NS, true);
     s.SetInt(KEY_VOL, v);
     refresh_settings_ui();
@@ -1416,13 +1425,13 @@ void AppMcp::build_ui()
     style_box(_settings_panel, COL_BG, 0);
     lv_obj_add_flag(_settings_panel, LV_OBJ_FLAG_HIDDEN);
 
-    const int set_hdr_y = top_y + (is_fix ? 4 : 10);
-    const int row_h     = is_fix ? 48 : 56;
-    const int row_y0    = top_y + (is_fix ? 36 : 44);
-    const int row_step  = is_fix ? 54 : 64;
-    const int btn_ry    = is_fix ? 6 : 9;
+    const int set_hdr_y = top_y + (is_fix ? 3 : 10);
+    const int row_h     = is_fix ? 46 : 56;
+    const int row_y0    = top_y + (is_fix ? 33 : 44);
+    const int row_step  = is_fix ? 51 : 64;
+    const int btn_ry    = is_fix ? 5 : 9;
     const int btn_rh    = is_fix ? 36 : 38;
-    const int lbl_ry    = is_fix ? 15 : 19;
+    const int lbl_ry    = is_fix ? 14 : 19;
 
     lv_obj_t* lbl_set_title = lv_label_create(_settings_panel);
     lv_obj_set_pos(lbl_set_title, 12, set_hdr_y + 4);

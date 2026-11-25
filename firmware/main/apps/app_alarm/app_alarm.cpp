@@ -978,10 +978,10 @@ void AppAlarm::build_ui()
 
     const int top_y      = view::get_status_bar_top_offset();
     const bool is_fix    = (top_y > 0);
-    const int sub_btn_y  = top_y + (is_fix ? 3 : 5);
-    const int sub_btn_h  = is_fix ? 28 : 30;
-    const int sub_lbl_y  = top_y + (is_fix ? 8 : 10);
-    const int sub_body_y = top_y + (is_fix ? 35 : 40);
+    const int sub_btn_y  = top_y + (is_fix ? 2 : 5);
+    const int sub_btn_h  = is_fix ? 27 : 30;
+    const int sub_lbl_y  = top_y + (is_fix ? 7 : 10);
+    const int sub_body_y = top_y + (is_fix ? 32 : 40);
 
     /* ======================== 1. CLOCK SCREEN ======================== */
     _scr_clock = lv_obj_create(_root);
@@ -1187,17 +1187,17 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Row 1: Hour & Minute tactile steppers
-    const int ed_card_y = is_fix ? 62 : 40;
-    const int ed_card_h = is_fix ? 46 : 52;
-    const int ed_btn_y  = is_fix ? 5 : 7;
+    const int ed_card_y = is_fix ? 71 : 40;
+    const int ed_card_h = is_fix ? 44 : 52;
+    const int ed_btn_y  = is_fix ? 4 : 7;
     const int ed_btn_h  = is_fix ? 36 : 38;
-    const int ed_lbl_y  = is_fix ? 9 : 12;
-    const int ed_day_y  = is_fix ? 112 : 98;
-    const int ed_day_h  = is_fix ? 32 : 36;
-    const int ed_tag_y  = is_fix ? 148 : 140;
-    const int ed_tag_h  = is_fix ? 34 : 38;
-    const int ed_foot_y = is_fix ? 188 : 186;
-    const int ed_foot_h = is_fix ? 44 : 44;
+    const int ed_lbl_y  = is_fix ? 8 : 12;
+    const int ed_day_y  = is_fix ? 119 : 98;
+    const int ed_day_h  = is_fix ? 30 : 36;
+    const int ed_tag_y  = is_fix ? 153 : 140;
+    const int ed_tag_h  = is_fix ? 32 : 38;
+    const int ed_foot_y = is_fix ? 190 : 186;
+    const int ed_foot_h = is_fix ? 42 : 44;
 
     lv_obj_t* time_card = lv_obj_create(_scr_edit);
     lv_obj_set_pos(time_card, 8, ed_card_y);
@@ -1383,12 +1383,12 @@ void AppAlarm::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Countdown Timer pane
-    const int tmr_card_h = is_fix ? 74 : 88;
-    const int tmr_adj_y  = is_fix ? 82 : 98;
+    const int tmr_card_h = is_fix ? 68 : 88;
+    const int tmr_adj_y  = is_fix ? 75 : 98;
     const int tmr_adj_h  = is_fix ? 34 : 38;
-    const int tmr_act_y  = is_fix ? 122 : 144;
+    const int tmr_act_y  = is_fix ? 115 : 144;
     const int tmr_act_h  = is_fix ? 42 : 46;
-    const int sw_card_h  = is_fix ? 114 : 134;
+    const int sw_card_h  = is_fix ? 108 : 134;
 
     _box_timer = lv_obj_create(_scr_timer);
     lv_obj_set_pos(_box_timer, 0, sub_body_y);
@@ -1557,15 +1557,15 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    const int set_row_h   = is_fix ? 46 : 52;
-    const int set_row1_y  = is_fix ? 64 : 42;
-    const int set_row2_y  = is_fix ? 116 : 100;
-    const int set_btn_ry  = is_fix ? 5 : 7;
+    const int set_row_h   = is_fix ? 44 : 52;
+    const int set_row1_y  = is_fix ? 72 : 42;
+    const int set_row2_y  = is_fix ? 120 : 100;
+    const int set_btn_ry  = is_fix ? 4 : 7;
     const int set_btn_rh  = is_fix ? 36 : 38;
-    const int set_lbl_ry  = is_fix ? 14 : 17;
-    const int set_act_y   = is_fix ? 168 : 160;
+    const int set_lbl_ry  = is_fix ? 13 : 17;
+    const int set_act_y   = is_fix ? 170 : 160;
     const int set_act_h   = is_fix ? 38 : 42;
-    const int set_sync_y  = is_fix ? 212 : 210;
+    const int set_sync_y  = is_fix ? 214 : 210;
 
     auto make_set_row = [&](int y, const char* title) {
         lv_obj_t* c = lv_obj_create(_scr_settings);
