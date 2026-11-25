@@ -48,7 +48,7 @@ constexpr int H                      = 240;
 constexpr int Y_HOME_DEG             = 45;
 constexpr uint32_t REC_SAMPLE_RATE   = 16000;
 constexpr size_t REC_MAX_SECONDS     = 30;
-constexpr uint32_t DEFAULT_PAUSE_MS  = 2000;
+constexpr uint32_t DEFAULT_PAUSE_MS  = 1500;
 constexpr size_t PREROLL_CHUNKS      = 8;  // 8 * 40 ms = 320 ms pre-roll
 constexpr size_t REC_HEADER_BYTES    = 44;
 constexpr size_t REC_BUF_BYTES       = REC_HEADER_BYTES + REC_SAMPLE_RATE * 2 * REC_MAX_SECONDS;
@@ -220,13 +220,17 @@ void AppMcp::onOpen()
 
     // Load saved speaker volume, auto mode, silence pause & mic sensitivity
     {
-        Settings s(NVS_NS, false);
-        int v            = s.GetInt(KEY_VOL, 75);
-        int p            = s.GetInt(KEY_PAUSE_MS, static_cast<int>(DEFAULT_PAUSE_MS));
-        int sens         = s.GetInt(KEY_MIC_SENS, 1);
+        Settings s(NVS_NS, true);
+        int v    = s.GetInt(KEY_VOL, 75);
+        int p    = s.GetInt(KEY_PAUSE_MS, static_cast<int>(DEFAULT_PAUSE_MS));
+        int sens = s.GetInt(KEY_MIC_SENS, 1);
+        if (p == 1600) {
+            p = 1500;
+            s.SetInt(KEY_PAUSE_MS, p);
+        }
         _volume          = std::clamp(v, 10, 100);
         _auto_mode       = s.GetBool(KEY_AUTO, true);
-        _silence_stop_ms = static_cast<uint32_t>(std::clamp(p, 800, 4000));
+        _silence_stop_ms = static_cast<uint32_t>(std::clamp(p, 500, 4000));
         _mic_sens        = std::clamp(sens, 0, 2);
     }
     _settings_open = false;
@@ -454,7 +458,7 @@ void AppMcp::mic_task_loop()
     while (_running.load()) {
         bool manual_req = _rec_start_req.exchange(false);
         uint32_t now_t  = GetHAL().millis();
-        bool auto_ready = _wifi_ok.load() && _httpd_ok.load() && _auto_mode.load() &&
+        bool auto_ready = _wifi_ok.load() && _httpd_ok.load() && _auto_mode.load() && !_settings_open &&
                           !_playing.load() && !_play_pending.load() && !_rec_ready.load() &&
                           static_cast<int32_t>(now_t - _auto_hold_until_ms.load()) >= 0;
 
@@ -507,20 +511,21 @@ void AppMcp::mic_task_loop()
         set_status_text(_auto_mode.load() ? "Speak now (hands-free)" : "Listening... speak now");
         GetHAL().showRgbColor(0, 78, 26);
 
-        size_t pcm_pos           = 0;
-        size_t max_pcm_bytes     = _rec_wav_cap - REC_HEADER_BYTES;
-        uint32_t speech_start_ms = 0;
-        uint32_t last_voice_ms   = 0;
-        bool speech_heard        = false;
-        int speech_streak        = 0;
-        int active_voice_streak  = 0;
-        int voiced_frames        = 0;
-        int warmup_frames        = 0;
-        float speech_peak_rms    = 400.0f;
+        size_t pcm_pos            = 0;
+        size_t last_voice_pcm_pos = 0;
+        size_t max_pcm_bytes      = _rec_wav_cap - REC_HEADER_BYTES;
+        uint32_t speech_start_ms  = 0;
+        uint32_t last_voice_ms    = 0;
+        bool speech_heard         = false;
+        int speech_streak         = 0;
+        int active_voice_streak   = 0;
+        int voiced_frames         = 0;
+        int warmup_frames         = 0;
+        float speech_peak_rms     = 400.0f;
 
         while (_running.load() && !_rec_stop_req.load() && !_play_pending.load() && !_playing.load()) {
-            // If user turned AUTO off while silently waiting (no speech yet), exit standby cleanly
-            if (!manual_req && !_auto_mode.load() && !speech_heard) {
+            // If user turned AUTO off or opened settings while silently waiting, exit standby cleanly
+            if ((!manual_req && !_auto_mode.load() && !speech_heard) || (_settings_open && !speech_heard)) {
                 break;
             }
             if (!audio_codec->InputData(raw_in)) {
@@ -540,15 +545,15 @@ void AppMcp::mic_task_loop()
             _mic_level.store(std::clamp(rms / 35, 0, 100));
 
             uint32_t now = GetHAL().millis();
-            if (warmup_frames < 2) {
-                noise_floor = std::clamp(noise_floor * 0.85f + std::min(rms, 420) * 0.15f, 80.0f, 380.0f);
+            if (warmup_frames < 1) {
+                noise_floor = std::clamp(static_cast<float>(rms), 100.0f, 580.0f);
                 ++warmup_frames;
                 continue;
             }
 
             int sens      = _mic_sens.load();
             float min_thr = (sens == 0) ? 540.0f : (sens == 2 ? 230.0f : 340.0f);
-            float mult    = (sens == 0) ? 2.6f : (sens == 2 ? 1.75f : 2.1f);
+            float mult    = (sens == 0) ? 2.4f : (sens == 2 ? 1.65f : 1.95f);
             float thresh  = std::max(min_thr, noise_floor * mult);
             if (!speech_heard) {
                 // Store chunk in pre-roll ring while waiting for voice
@@ -561,7 +566,7 @@ void AppMcp::mic_task_loop()
 
                 if (rms > thresh) {
                     ++speech_streak;
-                    if (speech_streak >= 2 || rms > thresh * 1.25f) {
+                    if (speech_streak >= 2 || rms > thresh * 1.22f) {
                         speech_heard        = true;
                         speech_start_ms     = now;
                         last_voice_ms       = now;
@@ -581,15 +586,16 @@ void AppMcp::mic_task_loop()
                                         preroll.data() + slot * out_frames, out_frames * sizeof(int16_t));
                             pcm_pos += out_frames * sizeof(int16_t);
                         }
+                        last_voice_pcm_pos = pcm_pos;
                     }
                 } else {
                     speech_streak = 0;
                     if (rms < noise_floor) {
-                        noise_floor = noise_floor * 0.88f + rms * 0.12f;
-                    } else if (rms < noise_floor * 1.35f) {
-                        noise_floor = noise_floor * 0.98f + rms * 0.02f;
+                        noise_floor = noise_floor * 0.85f + rms * 0.15f;
+                    } else {
+                        noise_floor = noise_floor * 0.93f + rms * 0.07f;
                     }
-                    noise_floor = std::clamp(noise_floor, 80.0f, 380.0f);
+                    noise_floor = std::clamp(noise_floor, 100.0f, 600.0f);
                 }
                 continue;
             }
@@ -611,11 +617,12 @@ void AppMcp::mic_task_loop()
                 speech_peak_rms = std::max(thresh, speech_peak_rms * 0.996f);
             }
 
-            float cont_thresh = std::max(thresh * 0.88f, noise_floor + (speech_peak_rms - noise_floor) * 0.26f);
+            float cont_thresh = std::max(thresh, noise_floor + (speech_peak_rms - noise_floor) * 0.28f);
             if (rms > cont_thresh) {
                 ++voiced_frames;
-                if (++active_voice_streak >= 2 || rms > cont_thresh * 1.25f) {
-                    last_voice_ms = now;
+                if (++active_voice_streak >= 2 || rms > cont_thresh * 1.22f) {
+                    last_voice_ms      = now;
+                    last_voice_pcm_pos = pcm_pos;
                 }
             } else {
                 active_voice_streak = 0;
@@ -623,7 +630,7 @@ void AppMcp::mic_task_loop()
 
             // Auto-stop after configured silence pause following speech
             uint32_t pause_ms = _silence_stop_ms.load();
-            if ((now - last_voice_ms) >= pause_ms && (now - speech_start_ms) >= 500) {
+            if ((now - last_voice_ms) >= pause_ms && (now - speech_start_ms) >= 450) {
                 break;
             }
             if ((now - speech_start_ms) >= REC_MAX_SECONDS * 1000) {
@@ -637,6 +644,12 @@ void AppMcp::mic_task_loop()
         _mic_level    = 0;
         _rec_speaking = false;
         _rec_active   = false;
+
+        if (speech_heard && last_voice_pcm_pos > 0) {
+            // Trim trailing silence beyond 240 ms after the last voiced frame for faster Wi-Fi + ASR
+            size_t tail_bytes = 6 * out_frames * sizeof(int16_t);
+            pcm_pos           = std::min(pcm_pos, last_voice_pcm_pos + tail_bytes);
+        }
 
         if (speech_heard && voiced_frames >= 5 && pcm_pos >= 6400 && !_play_pending.load() && !_playing.load()) {
             std::lock_guard<std::mutex> lk(_rec_mtx);
@@ -843,7 +856,7 @@ void AppMcp::play_wav_url(const std::string& url)
 
     _speak_rms          = 0;
     _playing            = false;
-    _auto_hold_until_ms = GetHAL().millis() + 250;
+    _auto_hold_until_ms = GetHAL().millis() + 120;
     set_status_text(_rec_ready.load() ? "Sending voice to Antigravity..."
                                       : (_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity"));
     GetHAL().showRgbColor(0, 48, 42);
@@ -887,7 +900,9 @@ void AppMcp::change_volume(int delta)
 
 void AppMcp::change_pause_ms(int delta_ms)
 {
-    int p            = std::clamp(static_cast<int>(_silence_stop_ms.load()) + delta_ms, 800, 4000);
+    int cur          = static_cast<int>(_silence_stop_ms.load());
+    int rounded      = ((cur + delta_ms + 50) / 100) * 100;
+    int p            = std::clamp(rounded, 500, 4000);
     _silence_stop_ms = static_cast<uint32_t>(p);
     Settings s(NVS_NS, true);
     s.SetInt(KEY_PAUSE_MS, p);
@@ -906,6 +921,9 @@ void AppMcp::set_mic_sens(int sens)
 void AppMcp::set_settings_open(bool open)
 {
     _settings_open = open;
+    if (open && _rec_active.load() && !_rec_speaking.load()) {
+        _rec_stop_req = true;
+    }
     if (_settings_panel) {
         if (open) {
             refresh_settings_ui();
@@ -1476,13 +1494,13 @@ void AppMcp::build_ui()
         return card;
     };
 
-    // Row 1: Silence Pause (0.8s .. 4.0s)
+    // Row 1: Silence Pause (0.5s .. 4.0s in 0.1s steps)
     lv_obj_t* row_pause = make_row(row_y0, "PAUSE");
     lv_obj_t* btn_pm    = make_btn(row_pause, 114, btn_ry, 48, btn_rh, "-", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         btn_pm,
         [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_pause_ms(-200);
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_pause_ms(-100);
         },
         LV_EVENT_CLICKED, this);
 
@@ -1497,7 +1515,7 @@ void AppMcp::build_ui()
     lv_obj_add_event_cb(
         btn_pp,
         [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_pause_ms(200);
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_pause_ms(100);
         },
         LV_EVENT_CLICKED, this);
 
