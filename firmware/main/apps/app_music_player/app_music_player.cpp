@@ -320,6 +320,25 @@ void AppMusicPlayer::onOpen()
     // 5. Start audio decoding task (stack in PSRAM)
     start_audio_task();
 
+    // 5b. Subscribe physical sensors (head tap=play/pause, swipe=next/prev, shake=next)
+    _pending_head_action = 0;
+    _pending_shake       = false;
+    _last_gesture_ms     = GetHAL().millis();
+    _head_pet_conn       = GetHAL().onHeadPetGesture.connect([this](HeadPetGesture g) {
+        if (g == HeadPetGesture::Press) {
+            _pending_head_action = 1;
+        } else if (g == HeadPetGesture::SwipeForward) {
+            _pending_head_action = 2;
+        } else if (g == HeadPetGesture::SwipeBackward) {
+            _pending_head_action = 3;
+        }
+    });
+    _imu_conn = GetHAL().onImuMotionEvent.connect([this](ImuMotionEvent e) {
+        if (e == ImuMotionEvent::Shake) {
+            _pending_shake = true;
+        }
+    });
+
     // 6. Build LVGL UI
     {
         LvglLockGuard lock;
@@ -338,6 +357,27 @@ void AppMusicPlayer::onRunning()
     uint32_t now = GetHAL().millis();
 
     process_web_commands();
+
+    // Physical head-touch & IMU shake controls
+    int head_act = _pending_head_action.exchange(0);
+    if (head_act != 0 && (now - _last_gesture_ms) >= 450) {
+        _last_gesture_ms = now;
+        if (head_act == 1) {
+            toggle_play();
+        } else if (head_act == 2) {
+            change_track(1);
+        } else if (head_act == 3) {
+            change_track(-1);
+        }
+        LvglLockGuard lock;
+        refresh_main_ui(now);
+    }
+    if (_pending_shake.exchange(false) && (now - _last_gesture_ms) >= 1200) {
+        _last_gesture_ms = now;
+        change_track(1);
+        LvglLockGuard lock;
+        refresh_main_ui(now);
+    }
 
     if (!_status_msg.empty() && static_cast<int32_t>(now - _status_until) >= 0) {
         _status_msg.clear();
@@ -409,6 +449,15 @@ void AppMusicPlayer::onClose()
 
     save_settings();
     save_last_track();
+
+    if (_head_pet_conn >= 0) {
+        GetHAL().onHeadPetGesture.disconnect(_head_pet_conn);
+        _head_pet_conn = -1;
+    }
+    if (_imu_conn >= 0) {
+        GetHAL().onImuMotionEvent.disconnect(_imu_conn);
+        _imu_conn = -1;
+    }
 
     stop_playback();
     stop_audio_task();

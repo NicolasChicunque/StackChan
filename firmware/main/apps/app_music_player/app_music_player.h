@@ -225,6 +225,13 @@ private:
     bool _batt_chg            = false;
     bool _avatar_showing_happy = false;
 
+    // Hardware sensor controls: head tap = play/pause, swipe = next/prev, IMU shake = next
+    int _head_pet_conn        = -1;
+    int _imu_conn             = -1;
+    std::atomic<int> _pending_head_action{0};  // 1=toggle, 2=next, 3=prev
+    std::atomic<bool> _pending_shake{false};
+    uint32_t _last_gesture_ms = 0;
+
     // Background audio task synchronization
     mutable std::mutex _audio_mutex;
     std::atomic<bool> _task_running{false};

@@ -14,6 +14,8 @@
 #include "esp_https_ota.h"
 #include "esp_crt_bundle.h"
 #include "string.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 static const char *TAG = "ota";
 
@@ -132,4 +134,97 @@ bool start_ota_update(const char *url, void (*on_progress)(int progress))
 
     ESP_LOGE(TAG, "Firmware upgrade failed: %s", esp_err_to_name(ret));
     return false;
+}
+
+bool start_ota_from_file(const char *filepath, void (*on_progress)(int progress))
+{
+    if (filepath == NULL || filepath[0] == '\0') {
+        ESP_LOGE(TAG, "Invalid local OTA file path");
+        return false;
+    }
+
+    FILE *f = fopen(filepath, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open local OTA binary: %s", filepath);
+        return false;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long total_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (total_size <= 0) {
+        ESP_LOGE(TAG, "Invalid local OTA binary size: %ld", total_size);
+        fclose(f);
+        return false;
+    }
+
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (!update_partition) {
+        ESP_LOGE(TAG, "No OTA update partition found");
+        fclose(f);
+        return false;
+    }
+
+    esp_ota_handle_t ota_handle = 0;
+    esp_err_t err               = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+        fclose(f);
+        return false;
+    }
+
+    uint8_t *buf = (uint8_t *)malloc(4096);
+    if (!buf) {
+        esp_ota_abort(ota_handle);
+        fclose(f);
+        return false;
+    }
+
+    long written      = 0;
+    int last_progress = -1;
+    bool ok           = true;
+    while (written < total_size) {
+        size_t n = fread(buf, 1, 4096, f);
+        if (n == 0) {
+            break;
+        }
+        err = esp_ota_write(ota_handle, buf, n);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
+            ok = false;
+            break;
+        }
+        written += (long)n;
+        int progress = (int)((written * 100) / total_size);
+        if (progress != last_progress) {
+            last_progress = progress;
+            if (on_progress) {
+                on_progress(progress);
+            }
+        }
+    }
+
+    free(buf);
+    fclose(f);
+
+    if (!ok || written != total_size) {
+        esp_ota_abort(ota_handle);
+        return false;
+    }
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    err = esp_ota_set_boot_partition(update_partition);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Local SD OTA succeed (%s), rebooting...", filepath);
+    esp_restart();
+    return true;
 }

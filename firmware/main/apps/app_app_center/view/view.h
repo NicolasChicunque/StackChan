@@ -23,7 +23,7 @@ namespace view {
  */
 class AppListPage {
 public:
-    AppListPage(const app_center::AppInfoList_t& app_list, bool is_custom_store)
+    AppListPage(const app_center::AppInfoList_t& app_list, int store_source)
     {
         _panel = std::make_unique<uitk::lvgl_cpp::Container>(lv_screen_active());
         _panel->setSize(320, 240);
@@ -57,53 +57,46 @@ public:
         _title->setTextColor(lv_color_hex(0xFFF8C7));
         _title->align(LV_ALIGN_CENTER, 0, 0);
 
-        // Segmented store selector: Community / Official
+        // Segmented store selector: Community | Official | SD
         _store_bar = std::make_unique<uitk::lvgl_cpp::Container>(*_panel);
-        _store_bar->setSize(282, 36);
+        _store_bar->setSize(286, 36);
         _store_bar->setRadius(18);
         _store_bar->setBorderWidth(0);
         _store_bar->setBgColor(lv_color_hex(0xF3D48E));
         _store_bar->setPadding(3, 3, 3, 3);
-        _store_bar->setPadColumn(4);
+        _store_bar->setPadColumn(3);
         _store_bar->setFlexFlow(LV_FLEX_FLOW_ROW);
         _store_bar->setFlexAlign(LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         _store_bar->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
 
-        _btn_custom = std::make_unique<uitk::lvgl_cpp::Button>(*_store_bar);
-        _btn_custom->setSize(136, 30);
-        _btn_custom->setRadius(15);
-        _btn_custom->setBorderWidth(0);
-        _btn_custom->setShadowWidth(0);
-        _btn_custom->setBgColor(lv_color_hex(is_custom_store ? 0xF4A354 : 0xF3D48E));
-        _btn_custom->label().setText("Community");
-        _btn_custom->label().setTextFont(&lv_font_montserrat_16);
-        _btn_custom->label().setTextColor(lv_color_hex(is_custom_store ? 0xFFF8C7 : 0x7A5720));
-        _btn_custom->label().setAlign(LV_ALIGN_CENTER);
-        _btn_custom->onClick().connect([this, is_custom_store]() {
-            if (!is_custom_store) {
-                _store_switch_target = 1;
-            }
-        });
+        auto make_tab = [&](const char* label, int target_src, int width) {
+            auto btn         = std::make_unique<uitk::lvgl_cpp::Button>(*_store_bar);
+            const bool is_on = (store_source == target_src);
+            btn->setSize(width, 30);
+            btn->setRadius(15);
+            btn->setBorderWidth(0);
+            btn->setShadowWidth(0);
+            btn->setBgColor(lv_color_hex(is_on ? 0xF4A354 : 0xF3D48E));
+            btn->label().setText(label);
+            btn->label().setTextFont(&lv_font_montserrat_16);
+            btn->label().setTextColor(lv_color_hex(is_on ? 0xFFF8C7 : 0x7A5720));
+            btn->label().setAlign(LV_ALIGN_CENTER);
+            btn->onClick().connect([this, store_source, target_src]() {
+                if (store_source != target_src) {
+                    _store_switch_target = target_src;
+                }
+            });
+            return btn;
+        };
 
-        _btn_official = std::make_unique<uitk::lvgl_cpp::Button>(*_store_bar);
-        _btn_official->setSize(136, 30);
-        _btn_official->setRadius(15);
-        _btn_official->setBorderWidth(0);
-        _btn_official->setShadowWidth(0);
-        _btn_official->setBgColor(lv_color_hex(is_custom_store ? 0xF3D48E : 0xF4A354));
-        _btn_official->label().setText("Official");
-        _btn_official->label().setTextFont(&lv_font_montserrat_16);
-        _btn_official->label().setTextColor(lv_color_hex(is_custom_store ? 0x7A5720 : 0xFFF8C7));
-        _btn_official->label().setAlign(LV_ALIGN_CENTER);
-        _btn_official->onClick().connect([this, is_custom_store]() {
-            if (is_custom_store) {
-                _store_switch_target = 0;
-            }
-        });
+        _btn_custom   = make_tab("Community", 1, 114);
+        _btn_official = make_tab("Official", 0, 96);
+        _btn_sd       = make_tab("SD", 2, 64);
 
         if (app_list.empty()) {
             _empty_label = std::make_unique<uitk::lvgl_cpp::Label>(*_panel);
-            _empty_label->setText("No apps found.\nCheck Wi-Fi or switch store.");
+            _empty_label->setText(store_source == 2 ? "No .bin files in /sd/apps/."
+                                                    : "No apps found.\nCheck Wi-Fi or switch store.");
             _empty_label->setTextFont(&lv_font_montserrat_16);
             _empty_label->setTextColor(lv_color_hex(0x7A5720));
             _empty_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
@@ -157,6 +150,7 @@ private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _store_bar;
     std::unique_ptr<uitk::lvgl_cpp::Button> _btn_custom;
     std::unique_ptr<uitk::lvgl_cpp::Button> _btn_official;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_sd;
     std::unique_ptr<uitk::lvgl_cpp::Label> _empty_label;
     std::vector<std::unique_ptr<uitk::lvgl_cpp::Button>> _buttons;
     lv_image_dsc_t _bg_image;

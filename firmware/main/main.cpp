@@ -55,6 +55,42 @@ extern "C" void app_main(void)
         const int alarm_app_id = GetMooncake().installApp(std::make_unique<AppAlarm>());
         hal_toggles::register_app_id(hal_toggles::App::Alarm, alarm_app_id);
 #endif
+#if STACKCHAN_ENABLE_APP_FX
+        GetMooncake().installApp(std::make_unique<AppFx>());
+#endif
+#if STACKCHAN_ENABLE_APP_HEALTH
+        GetMooncake().installApp(std::make_unique<AppHealth>());
+#endif
+#if STACKCHAN_ENABLE_APP_GAMES
+        GetMooncake().installApp(std::make_unique<AppGames>());
+#endif
+#if STACKCHAN_ENABLE_APP_DECK
+        GetMooncake().installApp(std::make_unique<AppDeck>());
+#endif
+#if STACKCHAN_ENABLE_APP_NFC
+        GetMooncake().installApp(std::make_unique<AppNfc>());
+#endif
+#if STACKCHAN_ENABLE_APP_HOME
+        GetMooncake().installApp(std::make_unique<AppHome>());
+#endif
+#if STACKCHAN_ENABLE_APP_CALENDAR
+        GetMooncake().installApp(std::make_unique<AppCalendar>());
+#endif
+#if STACKCHAN_ENABLE_APP_ENGLISH
+        GetMooncake().installApp(std::make_unique<AppEnglish>());
+#endif
+#if STACKCHAN_ENABLE_APP_TRAKT
+        GetMooncake().installApp(std::make_unique<AppTrakt>());
+#endif
+#if STACKCHAN_ENABLE_APP_FILES
+        GetMooncake().installApp(std::make_unique<AppFiles>());
+#endif
+#if STACKCHAN_ENABLE_APP_COMPANION
+        GetMooncake().installApp(std::make_unique<AppCompanion>());
+#endif
+#if STACKCHAN_ENABLE_APP_SENTINEL
+        GetMooncake().installApp(std::make_unique<AppSentinel>());
+#endif
         GetMooncake().installApp(std::make_unique<AppSetup>());
 
 #if STACKCHAN_ENABLE_APP_ALARM

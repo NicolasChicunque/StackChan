@@ -284,6 +284,8 @@ public:
     /* -------------------------------- App center ------------------------------- */
     app_center::AppInfoList_t fetchAppList();
     bool launchApp(std::string_view url, std::function<void(int)> onProgress);
+    int getAppStoreSource();            // 0 = Official, 1 = Community, 2 = SD Card (/sd/apps)
+    void setAppStoreSource(int source);
     bool isCustomAppStoreEnabled();
     void setCustomAppStoreEnabled(bool enabled);
     std::string getCustomAppStoreUrl();
