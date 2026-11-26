@@ -26,6 +26,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <jpg/image_to_jpeg.h>
+#include <hal/utils/jpeg_to_image/jpeg_decoder.h>
 
 #include <algorithm>
 #include <cctype>
@@ -301,6 +302,12 @@ void AppMcp::onRunning()
         }
         view::update_home_indicator();
         view::update_status_bar();
+        if (_snap_new.exchange(false)) {
+            show_snapshot();
+        }
+        if (_snap_panel && _snap_hide_ms != 0 && static_cast<int32_t>(now - _snap_hide_ms) >= 0) {
+            hide_snapshot();
+        }
     }
 }
 
@@ -1315,7 +1322,7 @@ int AppMcp::handle_snapshot(httpd_req* req)
     size_t jpeg_len    = 0;
     bool encoded       = image_to_jpeg(const_cast<uint8_t*>(camera->GetFrameData()), camera->GetFrameSize(),
                                        camera->GetFrameWidth(), camera->GetFrameHeight(),
-                                       static_cast<v4l2_pix_fmt_t>(camera->GetFrameFormat()), 60, &jpeg_data,
+                                       static_cast<v4l2_pix_fmt_t>(camera->GetFrameFormat()), 80, &jpeg_data,
                                        &jpeg_len);
     if (!encoded || !jpeg_data || jpeg_len == 0) {
         if (jpeg_data) {
@@ -1323,6 +1330,23 @@ int AppMcp::handle_snapshot(httpd_req* req)
         }
         send_json(req, "{\"success\":false,\"error\":\"JPEG encode failed\"}", "500 Internal Server Error");
         return ESP_OK;
+    }
+
+    bool is_warmup = false;
+    char query[48] = {};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        std::strstr(query, "preview=0") != nullptr) {
+        is_warmup = true;
+    }
+
+    if (!is_warmup) {
+        auto* self   = static_cast<AppMcp*>(req->user_ctx);
+        auto decoded = jpeg_dec::decode_to_lvgl(jpeg_data, jpeg_len);
+        if (decoded) {
+            std::lock_guard<std::mutex> lk(self->_snap_mtx);
+            self->_snap_img = decoded;
+            self->_snap_new = true;
+        }
     }
 
     httpd_resp_set_type(req, "image/jpeg");
@@ -1618,13 +1642,91 @@ void AppMcp::build_ui()
         LV_EVENT_CLICKED, this);
 
     refresh_settings_ui();
+
+    // Camera preview overlay (shown when a snapshot is taken via MCP; tap to close)
+    _snap_panel = lv_obj_create(_root);
+    lv_obj_set_pos(_snap_panel, 0, top_y);
+    lv_obj_set_size(_snap_panel, W, H - top_y);
+    style_box(_snap_panel, COL_BG, 0);
+    lv_obj_add_flag(_snap_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_snap_panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        _snap_panel,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->hide_snapshot();
+        },
+        LV_EVENT_CLICKED, this);
+
+    _snap_view = lv_image_create(_snap_panel);
+    lv_obj_align(_snap_view, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_remove_flag(_snap_view, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* lbl_snap = lv_label_create(_snap_panel);
+    lv_obj_align(lbl_snap, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_text_font(lbl_snap, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_snap, lv_color_hex(COL_WHITE), 0);
+    lv_obj_set_style_bg_color(lbl_snap, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_bg_opa(lbl_snap, LV_OPA_70, 0);
+    lv_label_set_text(lbl_snap, LV_SYMBOL_IMAGE " CAMERA - tap to close");
+}
+
+void AppMcp::show_snapshot()
+{
+    if (!_snap_panel || !_snap_view) {
+        return;
+    }
+    std::shared_ptr<LvglImage> img;
+    {
+        std::lock_guard<std::mutex> lk(_snap_mtx);
+        img.swap(_snap_img);
+    }
+    if (!img) {
+        return;
+    }
+    const lv_img_dsc_t* dsc = img->image_dsc();
+    const int avail_h       = H - view::get_status_bar_top_offset();
+    const int scale_w       = (256 * W) / std::max<int>(dsc->header.w, 1);
+    const int scale_h       = (256 * avail_h) / std::max<int>(dsc->header.h, 1);
+    lv_image_set_src(_snap_view, dsc);
+    _snap_shown_img = std::move(img);
+    lv_image_set_scale(_snap_view, static_cast<uint32_t>(std::min(scale_w, scale_h)));
+    lv_obj_align(_snap_view, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_remove_flag(_snap_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_snap_panel);
+    _snap_hide_ms = GetHAL().millis() + 8000;
+}
+
+void AppMcp::hide_snapshot()
+{
+    _snap_hide_ms = 0;
+    if (_snap_panel) {
+        lv_obj_add_flag(_snap_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (_snap_view) {
+        lv_image_set_src(_snap_view, nullptr);
+    }
+    _snap_shown_img.reset();
+    std::lock_guard<std::mutex> lk(_snap_mtx);
+    _snap_img.reset();
 }
 
 void AppMcp::destroy_ui()
 {
     if (_root) {
+        if (_snap_view) {
+            lv_image_set_src(_snap_view, nullptr);
+        }
         lv_obj_delete(_root);
         _root           = nullptr;
+        _snap_panel     = nullptr;
+        _snap_view      = nullptr;
+        _snap_hide_ms   = 0;
+        _snap_shown_img.reset();
+        {
+            std::lock_guard<std::mutex> lk(_snap_mtx);
+            _snap_img.reset();
+        }
+        _snap_new       = false;
         _settings_panel = nullptr;
         _lbl_set_pause  = nullptr;
         _lbl_set_vol    = nullptr;
