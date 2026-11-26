@@ -76,7 +76,7 @@ public:
         _btn_custom->setShadowWidth(0);
         _btn_custom->setBgColor(lv_color_hex(is_custom_store ? 0xF4A354 : 0xF3D48E));
         _btn_custom->label().setText("Community");
-        _btn_custom->label().setTextFont(&lv_font_montserrat_14);
+        _btn_custom->label().setTextFont(&lv_font_montserrat_16);
         _btn_custom->label().setTextColor(lv_color_hex(is_custom_store ? 0xFFF8C7 : 0x7A5720));
         _btn_custom->label().setAlign(LV_ALIGN_CENTER);
         _btn_custom->onClick().connect([this, is_custom_store]() {
@@ -92,7 +92,7 @@ public:
         _btn_official->setShadowWidth(0);
         _btn_official->setBgColor(lv_color_hex(is_custom_store ? 0xF3D48E : 0xF4A354));
         _btn_official->label().setText("Official");
-        _btn_official->label().setTextFont(&lv_font_montserrat_14);
+        _btn_official->label().setTextFont(&lv_font_montserrat_16);
         _btn_official->label().setTextColor(lv_color_hex(is_custom_store ? 0x7A5720 : 0xFFF8C7));
         _btn_official->label().setAlign(LV_ALIGN_CENTER);
         _btn_official->onClick().connect([this, is_custom_store]() {
@@ -202,7 +202,7 @@ public:
         if (!app_info.version.empty()) {
             _version_label = std::make_unique<uitk::lvgl_cpp::Label>(*_panel);
             _version_label->setText(fmt::format("v{}", app_info.version));
-            _version_label->setTextFont(&lv_font_montserrat_14);
+            _version_label->setTextFont(&lv_font_montserrat_16);
             _version_label->setTextColor(lv_color_hex(0xA36135));
             _version_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
         }
