@@ -64,6 +64,7 @@ jobs:
         working-directory: firmware
         run: |
           . /opt/esp/idf/export.sh
+          python3 ./fetch_repos.py
           idf.py set-target esp32s3
           idf.py build
           idf.py merge-bin -o "build/stackchan-${{ matrix.app.id }}-merged.bin"
