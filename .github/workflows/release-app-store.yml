@@ -53,14 +53,16 @@ jobs:
         env:
           STORE_REF: ${{ github.event.inputs.store_ref || 'feat/custom-app-store' }}
         run: |
+          git config --global --add safe.directory "*"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin "${STORE_REF}"
-          git merge --no-edit "origin/${STORE_REF}"
+          git merge --no-edit FETCH_HEAD
 
       - name: Build ESP32-S3 firmware
         working-directory: firmware
         run: |
+          source /opt/esp/idf/export.sh
           idf.py set-target esp32s3
           idf.py build
           idf.py merge-bin -o "build/stackchan-${{ matrix.app.id }}-merged.bin"
