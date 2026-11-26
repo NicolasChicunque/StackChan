@@ -2622,54 +2622,13 @@ void AppGemini::build_ui()
         self->on_primary_button();
     };
 
-    _avatar_img = lv_image_create(_stage_cont);
-    if (_img_naruto_calm.data != nullptr) {
-        lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        int target_h = std::max<int>(76, stage_h - 4);
-        if (_img_naruto_calm.header.h > 0) {
-            uint16_t scale = static_cast<uint16_t>((target_h * 256) / _img_naruto_calm.header.h);
-            lv_image_set_scale(_avatar_img, scale);
-        }
-    }
-    lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(_avatar_img, on_stage_click, LV_EVENT_CLICKED, this);
-
-    _face_card = lv_obj_create(_stage_cont);
-    lv_obj_set_size(_face_card, 176, std::max<int>(78, stage_h - 8));
-    lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, 0);
-    style_flat_box(_face_card, COL_CARD, 18);
-    lv_obj_set_style_border_width(_face_card, 2, 0);
-    lv_obj_set_style_border_color(_face_card, lv_color_hex(COL_GEMINI_BLUE), 0);
-    lv_obj_add_flag(_face_card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(_face_card, on_stage_click, LV_EVENT_CLICKED, this);
-
-    _face_eye_l = lv_obj_create(_face_card);
-    lv_obj_set_size(_face_eye_l, 18, 18);
-    lv_obj_align(_face_eye_l, LV_ALIGN_CENTER, -28, -8);
-    style_flat_box(_face_eye_l, COL_WHITE, LV_RADIUS_CIRCLE);
-    lv_obj_remove_flag(_face_eye_l, LV_OBJ_FLAG_CLICKABLE);
-
-    _face_eye_r = lv_obj_create(_face_card);
-    lv_obj_set_size(_face_eye_r, 18, 18);
-    lv_obj_align(_face_eye_r, LV_ALIGN_CENTER, 28, -8);
-    style_flat_box(_face_eye_r, COL_WHITE, LV_RADIUS_CIRCLE);
-    lv_obj_remove_flag(_face_eye_r, LV_OBJ_FLAG_CLICKABLE);
-
-    _face_mouth = lv_obj_create(_face_card);
-    lv_obj_set_size(_face_mouth, 38, 6);
-    lv_obj_align(_face_mouth, LV_ALIGN_CENTER, 0, 18);
-    style_flat_box(_face_mouth, COL_WHITE, 4);
-    lv_obj_remove_flag(_face_mouth, LV_OBJ_FLAG_CLICKABLE);
-
-    // Dual-avatar MCP stage (hidden in standalone mode; shown automatically while _mcp_attached == true)
+    // Always-on Dual-Avatar stage (Left: LIVE <Voice>, Right: AGENT $)
     _dual_stage = lv_obj_create(_stage_cont);
     lv_obj_set_pos(_dual_stage, 0, 0);
     lv_obj_set_size(_dual_stage, 304, stage_h);
     style_flat_box(_dual_stage, COL_CARD, 12);
     lv_obj_set_style_border_width(_dual_stage, 1, 0);
     lv_obj_set_style_border_color(_dual_stage, lv_color_hex(COL_CARD_HI), 0);
-    lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
 
     const int slot_w        = 146;
     const int slot_h        = std::max<int>(74, stage_h - 4);
@@ -2682,7 +2641,36 @@ void AppGemini::build_ui()
         style_flat_box(_slot_card[i], 0x0F172A, 10);
         lv_obj_set_style_border_width(_slot_card[i], 1, 0);
         lv_obj_set_style_border_color(_slot_card[i], lv_color_hex(0x24314F), 0);
-        lv_obj_remove_flag(_slot_card[i], LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(_slot_card[i], LV_OBJ_FLAG_CLICKABLE);
+        if (i == 0) {
+            lv_obj_add_event_cb(_slot_card[i], on_stage_click, LV_EVENT_CLICKED, this);
+        } else {
+            lv_obj_add_event_cb(
+                _slot_card[i],
+                [](lv_event_t* e) {
+                    auto* self = static_cast<AppGemini*>(lv_event_get_user_data(e));
+                    if (!self->_mcp_attached.load() && self->_mcp_help_card && self->_lbl_mcp_help) {
+                        std::string ip;
+                        {
+                            std::lock_guard<std::mutex> lk(self->_mcp_mtx);
+                            ip = self->_ip_str;
+                        }
+                        char buf[180];
+                        std::snprintf(buf, sizeof(buf),
+                                      "ACTIVATE AGENT $ (MCP)\n"
+                                      "1. Open AI agent (Antigravity, Claude...)\n"
+                                      "2. Run /stackchanchat on PC\n"
+                                      "IP: %s  (tap to close)",
+                                      ip.empty() ? "Connecting..." : ip.c_str());
+                        lv_label_set_text(self->_lbl_mcp_help, buf);
+                        lv_obj_remove_flag(self->_mcp_help_card, LV_OBJ_FLAG_HIDDEN);
+                        lv_obj_move_foreground(self->_mcp_help_card);
+                    } else {
+                        self->on_primary_button();
+                    }
+                },
+                LV_EVENT_CLICKED, this);
+        }
 
         _slot_dot[i] = lv_obj_create(_slot_card[i]);
         lv_obj_set_size(_slot_dot[i], 7, 7);
@@ -2695,6 +2683,7 @@ void AppGemini::build_ui()
         lv_obj_set_style_text_font(_slot_lbl[i], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(0x94A3B8), 0);
         lv_label_set_text(_slot_lbl[i], slot_txt[i]);
+        lv_obj_remove_flag(_slot_lbl[i], LV_OBJ_FLAG_CLICKABLE);
 
         _dual_img[i] = lv_image_create(_slot_card[i]);
         if (_img_naruto_calm.data != nullptr) {
@@ -2705,12 +2694,12 @@ void AppGemini::build_ui()
                                : static_cast<uint16_t>(is_fix ? 120 : 136);
             lv_image_set_scale(_dual_img[i], sc);
         }
-        lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 8);
+        lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 6);
         lv_obj_remove_flag(_dual_img[i], LV_OBJ_FLAG_CLICKABLE);
 
         _dual_face[i] = lv_obj_create(_slot_card[i]);
         lv_obj_set_size(_dual_face[i], 116, std::max<int>(54, slot_h - 24));
-        lv_obj_align(_dual_face[i], LV_ALIGN_CENTER, 0, 8);
+        lv_obj_align(_dual_face[i], LV_ALIGN_CENTER, 0, 6);
         style_flat_box(_dual_face[i], COL_BG, 12);
         lv_obj_set_style_border_width(_dual_face[i], 2, 0);
         lv_obj_set_style_border_color(_dual_face[i], lv_color_hex(0x24314F), 0);
@@ -2720,17 +2709,59 @@ void AppGemini::build_ui()
         lv_obj_set_size(_dual_eye_l[i], 15, 15);
         lv_obj_align(_dual_eye_l[i], LV_ALIGN_CENTER, -24, -6);
         style_flat_box(_dual_eye_l[i], COL_WHITE, LV_RADIUS_CIRCLE);
+        lv_obj_remove_flag(_dual_eye_l[i], LV_OBJ_FLAG_CLICKABLE);
 
         _dual_eye_r[i] = lv_obj_create(_dual_face[i]);
         lv_obj_set_size(_dual_eye_r[i], 15, 15);
         lv_obj_align(_dual_eye_r[i], LV_ALIGN_CENTER, 24, -6);
         style_flat_box(_dual_eye_r[i], COL_WHITE, LV_RADIUS_CIRCLE);
+        lv_obj_remove_flag(_dual_eye_r[i], LV_OBJ_FLAG_CLICKABLE);
 
         _dual_mouth[i] = lv_obj_create(_dual_face[i]);
         lv_obj_set_size(_dual_mouth[i], 30, 5);
         lv_obj_align(_dual_mouth[i], LV_ALIGN_CENTER, 0, 14);
         style_flat_box(_dual_mouth[i], COL_WHITE, 3);
+        lv_obj_remove_flag(_dual_mouth[i], LV_OBJ_FLAG_CLICKABLE);
     }
+
+    // Small status/onboarding hint label at the bottom of the right AGENT $ card
+    _lbl_agent_hint = lv_label_create(_slot_card[1]);
+    lv_obj_set_width(_lbl_agent_hint, slot_w - 8);
+    lv_obj_align(_lbl_agent_hint, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_obj_set_style_text_align(_lbl_agent_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_agent_hint, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_agent_hint, lv_color_hex(COL_DIM), 0);
+    lv_obj_set_style_bg_color(_lbl_agent_hint, lv_color_hex(0x0B1020), 0);
+    lv_obj_set_style_bg_opa(_lbl_agent_hint, LV_OPA_80, 0);
+    lv_obj_set_style_radius(_lbl_agent_hint, 4, 0);
+    lv_label_set_text(_lbl_agent_hint, "PC OFF · Tap");
+    lv_obj_remove_flag(_lbl_agent_hint, LV_OBJ_FLAG_CLICKABLE);
+
+    // Tap-to-dismiss onboarding guide card for activating MCP mode
+    _mcp_help_card = lv_obj_create(_stage_cont);
+    lv_obj_set_size(_mcp_help_card, 298, stage_h - 2);
+    lv_obj_align(_mcp_help_card, LV_ALIGN_CENTER, 0, 0);
+    style_flat_box(_mcp_help_card, 0x10192D, 12);
+    lv_obj_set_style_border_width(_mcp_help_card, 2, 0);
+    lv_obj_set_style_border_color(_mcp_help_card, lv_color_hex(COL_AMBER), 0);
+    lv_obj_add_flag(_mcp_help_card, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_mcp_help_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        _mcp_help_card,
+        [](lv_event_t* e) {
+            auto* self = static_cast<AppGemini*>(lv_event_get_user_data(e));
+            if (self->_mcp_help_card) lv_obj_add_flag(self->_mcp_help_card, LV_OBJ_FLAG_HIDDEN);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _lbl_mcp_help = lv_label_create(_mcp_help_card);
+    lv_obj_set_width(_lbl_mcp_help, 282);
+    lv_obj_align(_lbl_mcp_help, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_long_mode(_lbl_mcp_help, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(_lbl_mcp_help, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_mcp_help, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_mcp_help, lv_color_hex(COL_TEXT), 0);
+    lv_obj_remove_flag(_lbl_mcp_help, LV_OBJ_FLAG_CLICKABLE);
 
     // Setup card shown only when no API key is configured
     _setup_card = lv_obj_create(_stage_cont);
@@ -2943,11 +2974,6 @@ void AppGemini::destroy_ui()
         _lbl_badge      = nullptr;
         _lbl_vol_batt   = nullptr;
         _stage_cont     = nullptr;
-        _avatar_img     = nullptr;
-        _face_card      = nullptr;
-        _face_eye_l     = nullptr;
-        _face_eye_r     = nullptr;
-        _face_mouth     = nullptr;
         _dual_stage     = nullptr;
         for (int i = 0; i < 2; ++i) {
             _slot_card[i]  = nullptr;
@@ -2959,6 +2985,9 @@ void AppGemini::destroy_ui()
             _dual_eye_r[i] = nullptr;
             _dual_mouth[i] = nullptr;
         }
+        _lbl_agent_hint = nullptr;
+        _mcp_help_card  = nullptr;
+        _lbl_mcp_help   = nullptr;
         _setup_card     = nullptr;
         _lbl_setup_body = nullptr;
         _sub_box        = nullptr;
@@ -3005,22 +3034,34 @@ void AppGemini::refresh_ui(uint32_t now)
                            _img_naruto_calm.data != nullptr);
         if (need_key) {
             lv_obj_remove_flag(_setup_card, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
-            if (_avatar_img) lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
             if (_dual_stage) lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
-        } else if (mcp_on && _dual_stage) {
+        } else if (_dual_stage) {
             lv_obj_add_flag(_setup_card, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
-            if (_avatar_img) lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
+            if (mcp_on && _mcp_help_card) {
+                lv_obj_add_flag(_mcp_help_card, LV_OBJ_FLAG_HIDDEN);
+            }
 
-            const bool left_on    = !agent_on;
-            const uint32_t bg[2]  = {left_on ? 0x0E2235U : 0x0F172AU, agent_on ? 0x2A1E10U : 0x0F172AU};
-            const uint32_t brd[2] = {left_on ? 0x38BDF8U : 0x24314FU, agent_on ? 0xFBBF24U : 0x24314FU};
-            const uint32_t txt[2] = {left_on ? 0x38BDF8U : 0x64748BU, agent_on ? 0xFBBF24U : 0x64748BU};
-            const int bw[2]       = {left_on ? 2 : 1, agent_on ? 2 : 1};
-            const lv_opa_t opa[2] = {left_on ? LV_OPA_COVER : LV_OPA_40, agent_on ? LV_OPA_COVER : LV_OPA_40};
-            std::string left_lbl  = "LIVE " + _voice_name;
+            const bool left_on    = !(mcp_on && agent_on);
+            const bool right_lit  = (mcp_on && agent_on);
+            const uint32_t bg[2]  = {
+                left_on ? 0x0E2235U : 0x0F172AU,
+                right_lit ? 0x2A1E10U : 0x0F172AU,
+            };
+            const uint32_t brd[2] = {
+                left_on ? 0x38BDF8U : 0x24314FU,
+                right_lit ? 0xFBBF24U : (mcp_on ? 0x78350FU : 0x24314FU),
+            };
+            const uint32_t txt[2] = {
+                left_on ? 0x38BDF8U : 0x64748BU,
+                right_lit ? 0xFBBF24U : (mcp_on ? 0xD97706U : 0x64748BU),
+            };
+            const int bw[2]       = {left_on ? 2 : 1, right_lit ? 2 : 1};
+            const lv_opa_t opa[2] = {
+                left_on ? LV_OPA_COVER : LV_OPA_40,
+                right_lit ? LV_OPA_COVER : (mcp_on ? LV_OPA_60 : LV_OPA_50),
+            };
+            std::string left_lbl = "LIVE " + _voice_name;
             if (left_lbl.size() > 14) left_lbl.resize(14);
             lv_label_set_text(_slot_lbl[0], left_lbl.c_str());
             for (int i = 0; i < 2; ++i) {
@@ -3039,19 +3080,20 @@ void AppGemini::refresh_ui(uint32_t now)
                     lv_obj_set_style_border_color(_dual_face[i], lv_color_hex(brd[i]), 0);
                 }
             }
-            lv_obj_set_style_border_color(_dual_stage, lv_color_hex(agent_on ? 0xB45309U : 0x0284C7U), 0);
-        } else {
-            lv_obj_add_flag(_setup_card, LV_OBJ_FLAG_HIDDEN);
-            if (_dual_stage) lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
-            if (use_naruto && _avatar_img) {
-                lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
-                if (_avatar_img) {
-                    lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+            if (_lbl_agent_hint) {
+                if (!mcp_on) {
+                    lv_label_set_text(_lbl_agent_hint, "PC OFF · Tap");
+                    lv_obj_set_style_text_color(_lbl_agent_hint, lv_color_hex(COL_DIM), 0);
+                    lv_obj_remove_flag(_lbl_agent_hint, LV_OBJ_FLAG_HIDDEN);
+                } else if (!agent_on) {
+                    lv_label_set_text(_lbl_agent_hint, "MCP READY");
+                    lv_obj_set_style_text_color(_lbl_agent_hint, lv_color_hex(0xFBBF24), 0);
+                    lv_obj_remove_flag(_lbl_agent_hint, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(_lbl_agent_hint, LV_OBJ_FLAG_HIDDEN);
                 }
             }
+            lv_obj_set_style_border_color(_dual_stage, lv_color_hex(right_lit ? 0xB45309U : 0x0284C7U), 0);
         }
 
         const char* badge_txt = "GEMINI";
@@ -3146,107 +3188,28 @@ void AppGemini::refresh_ui(uint32_t now)
 
 void AppGemini::refresh_face_anim(uint32_t now, SessionState st)
 {
-    bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-                       _img_naruto_calm.data != nullptr);
-
-    if (_mcp_attached.load() && _dual_stage) {
-        const int active = _mcp_agent_active.load() ? 1 : 0;
-        const bool spk   = (st == SessionState::Speaking);
-        const int rms    = _audio_rms.load();
-        for (int i = 0; i < 2; ++i) {
-            const bool is_act = (i == active);
-            if (use_naruto && _dual_img[i]) {
-                bool happy = (is_act && spk && rms > 500 && ((now / 180) % 2 == 0));
-                lv_image_set_src(_dual_img[i], (happy && _img_naruto_happy.data) ? &_img_naruto_happy : &_img_naruto_calm);
-                int dy = (is_act && spk) ? -std::clamp(rms / 400, 0, 4) : 0;
-                lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 8 + dy);
-            } else if (_dual_face[i]) {
-                bool blink = is_act && ((now % 3800) > 3650);
-                lv_obj_set_size(_dual_eye_l[i], 15, blink ? 3 : 15);
-                lv_obj_set_size(_dual_eye_r[i], 15, blink ? 3 : 15);
-                int mh = (is_act && spk) ? (5 + std::clamp(rms / 240, 0, 13)) : 5;
-                lv_obj_set_size(_dual_mouth[i], 30, mh);
-                lv_obj_set_style_radius(_dual_mouth[i], (mh > 9) ? 6 : 3, 0);
-            }
-        }
+    if (!_dual_stage) {
         return;
     }
-
-    if (use_naruto && _avatar_img) {
-        bool want_happy = (st == SessionState::Speaking);
-        if (want_happy != _avatar_showing_happy) {
-            _avatar_showing_happy = want_happy;
-            if (want_happy && _img_naruto_happy.data != nullptr) {
-                lv_image_set_src(_avatar_img, &_img_naruto_happy);
-            } else if (_img_naruto_calm.data != nullptr) {
-                lv_image_set_src(_avatar_img, &_img_naruto_calm);
-            }
+    bool use_naruto  = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
+                        _img_naruto_calm.data != nullptr);
+    const int active = (_mcp_attached.load() && _mcp_agent_active.load()) ? 1 : 0;
+    const bool spk   = (st == SessionState::Speaking);
+    const int rms    = _audio_rms.load();
+    for (int i = 0; i < 2; ++i) {
+        const bool is_act = (i == active);
+        if (use_naruto && _dual_img[i]) {
+            bool happy = (is_act && spk && rms > 500 && ((now / 180) % 2 == 0));
+            lv_image_set_src(_dual_img[i], (happy && _img_naruto_happy.data) ? &_img_naruto_happy : &_img_naruto_calm);
+            int dy = (is_act && spk) ? -std::clamp(rms / 400, 0, 4) : 0;
+            lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 6 + dy);
+        } else if (_dual_face[i]) {
+            bool blink = is_act && ((now % 3800) > 3650);
+            lv_obj_set_size(_dual_eye_l[i], 15, blink ? 3 : 15);
+            lv_obj_set_size(_dual_eye_r[i], 15, blink ? 3 : 15);
+            int mh = (is_act && spk) ? (5 + std::clamp(rms / 240, 0, 13)) : 5;
+            lv_obj_set_size(_dual_mouth[i], 30, mh);
+            lv_obj_set_style_radius(_dual_mouth[i], (mh > 9) ? 6 : 3, 0);
         }
-        int oy = 0;
-        if (st == SessionState::Speaking) {
-            int rms = _audio_rms.load();
-            oy      = -std::clamp(rms / 400, 0, 5);
-        } else if (st == SessionState::Hearing) {
-            oy = static_cast<int>(std::sin(static_cast<float>(now % 700) / 700.0f * 6.28318f) * 2.0f);
-        } else {
-            oy = static_cast<int>(std::sin(static_cast<float>(now % 3000) / 3000.0f * 6.28318f) * 2.0f);
-        }
-        lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, oy);
-        return;
-    }
-
-    if (!_face_card) {
-        return;
-    }
-
-    int rms        = _audio_rms.load();
-    int offset_y   = 0;
-    int mouth_w    = 38;
-    int mouth_h    = 6;
-    uint32_t bcol  = COL_CARD_HI;
-
-    if (st == SessionState::Hearing) {
-        bcol    = COL_GREEN;
-        int lvl = std::clamp(rms / 250, 0, 10);
-        mouth_w = 24 + lvl;
-        mouth_h = 8 + lvl;
-    } else if (st == SessionState::Listening) {
-        bcol     = COL_GEMINI_BLUE;
-        offset_y = static_cast<int>(std::sin(static_cast<float>(now % 2400) / 2400.0f * 6.28318f) * 2.0f);
-    } else if (st == SessionState::Speaking) {
-        bcol    = COL_GEMINI_PURP;
-        int lvl = std::clamp(rms / 220, 0, 18);
-        mouth_w = 26 + lvl;
-        mouth_h = 8 + lvl;
-        offset_y = static_cast<int>(std::sin(static_cast<float>(now % 600) / 600.0f * 6.28318f) * 2.0f);
-    } else if (st == SessionState::Thinking || st == SessionState::ConnectingWifi ||
-               st == SessionState::ConnectingApi) {
-        bcol    = COL_AMBER;
-        mouth_w = 18;
-        mouth_h = 6;
-        offset_y = static_cast<int>(std::sin(static_cast<float>(now % 1400) / 1400.0f * 6.28318f) * 2.0f);
-    } else if (st == SessionState::Error) {
-        bcol    = COL_RED;
-        mouth_w = 26;
-        mouth_h = 4;
-    } else {
-        bcol     = COL_GEMINI_BLUE;
-        offset_y = static_cast<int>(std::sin(static_cast<float>(now % 3000) / 3000.0f * 6.28318f) * 2.0f);
-    }
-
-    lv_obj_set_style_border_color(_face_card, lv_color_hex(bcol), 0);
-    lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, offset_y);
-
-    bool blink = ((now % 3500) > 3350);
-    int eye_h  = blink ? 4 : 18;
-    if (_face_eye_l) {
-        lv_obj_set_size(_face_eye_l, 18, eye_h);
-    }
-    if (_face_eye_r) {
-        lv_obj_set_size(_face_eye_r, 18, eye_h);
-    }
-    if (_face_mouth) {
-        lv_obj_set_size(_face_mouth, mouth_w, mouth_h);
-        lv_obj_set_style_radius(_face_mouth, (st == SessionState::Speaking) ? 10 : 4, 0);
     }
 }

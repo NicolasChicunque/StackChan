@@ -248,16 +248,11 @@ private:
     lv_obj_t* _lbl_vol_batt     = nullptr;
 
     lv_obj_t* _stage_cont       = nullptr;
-    lv_obj_t* _avatar_img       = nullptr;
     lv_image_dsc_t _img_naruto_calm  = {};
     lv_image_dsc_t _img_naruto_happy = {};
     bool _avatar_showing_happy  = false;
-    lv_obj_t* _face_card        = nullptr;
-    lv_obj_t* _face_eye_l       = nullptr;
-    lv_obj_t* _face_eye_r       = nullptr;
-    lv_obj_t* _face_mouth       = nullptr;
 
-    // Dual-avatar MCP stage (shown automatically only while _mcp_attached == true)
+    // Always-on Dual-Avatar stage (Left: LIVE <Voice>, Right: AGENT $)
     lv_obj_t* _dual_stage       = nullptr;
     lv_obj_t* _slot_card[2]     = {nullptr, nullptr};
     lv_obj_t* _slot_dot[2]      = {nullptr, nullptr};
@@ -267,6 +262,9 @@ private:
     lv_obj_t* _dual_eye_l[2]    = {nullptr, nullptr};
     lv_obj_t* _dual_eye_r[2]    = {nullptr, nullptr};
     lv_obj_t* _dual_mouth[2]    = {nullptr, nullptr};
+    lv_obj_t* _lbl_agent_hint   = nullptr;
+    lv_obj_t* _mcp_help_card    = nullptr;
+    lv_obj_t* _lbl_mcp_help     = nullptr;
 
     lv_obj_t* _setup_card       = nullptr;
     lv_obj_t* _lbl_setup_body   = nullptr;
