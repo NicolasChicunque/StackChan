@@ -1031,7 +1031,7 @@ bool AppGemini::connect_live_session()
         return false;
     }
 
-    if (_mcp_agent_active.load()) {
+    if (_mcp_agent_active.load() && !_mcp_wait_reply_mode.load()) {
         set_state(SessionState::AgentWait);
         set_subtitle("Waiting for lead engineer...");
     } else if (_muted.load()) {
@@ -1165,6 +1165,21 @@ void AppGemini::handle_server_json(const char* data, size_t len)
     // Handle MCP toolCall (escalate_to_engineer / end_chat)
     cJSON* tool_call = cJSON_GetObjectItem(root, "toolCall");
     if (tool_call && cJSON_IsObject(tool_call)) {
+        // If we were waiting for a direct reply to AGENT $, capture the user's text immediately instead of escalating again
+        if (_mcp_wait_reply_mode.exchange(false)) {
+            _pcm_ring.clear();
+            {
+                std::lock_guard<std::mutex> lk(_mcp_mtx);
+                if (_mcp_reply_text.empty()) {
+                    _mcp_reply_text = _mcp_last_user_text;
+                }
+            }
+            _mcp_reply_ready = true;
+            set_state(SessionState::AgentWait);
+            set_subtitle("Reply sent to engineer...");
+            cJSON_Delete(root);
+            return;
+        }
         cJSON* fcs = cJSON_GetObjectItem(tool_call, "functionCalls");
         if (fcs && cJSON_IsArray(fcs)) {
             cJSON* fc = nullptr;
@@ -1453,7 +1468,7 @@ void AppGemini::net_task_loop()
                 codec->EnableInput(true);
             }
             set_state(SessionState::Listening);
-            set_subtitle("Speak naturally...");
+            set_subtitle(_mcp_wait_reply_mode.load() ? "Reply to engineer..." : "Speak naturally...");
         }
 
         if (_want_stop_talk.exchange(false)) {
@@ -1679,7 +1694,13 @@ void AppGemini::play_http_wav(const std::string& url, bool wait_reply_after)
     _pcm_ring.clear();
     _server_turn_done = false;
     set_state(SessionState::Speaking);
-    set_subtitle("Lead engineer speaking...");
+    std::string sub_txt;
+    {
+        std::lock_guard<std::mutex> lk(_mcp_mtx);
+        sub_txt = _mcp_next_subtitle;
+        _mcp_next_subtitle.clear();
+    }
+    set_subtitle(sub_txt.empty() ? "Lead engineer speaking..." : sub_txt);
 
     esp_http_client_config_t cfg = {};
     cfg.url                      = url.c_str();
@@ -1946,9 +1967,18 @@ int AppGemini::handle_play(httpd_req* req)
         return ESP_OK;
     }
     bool wait_reply = cJSON_IsTrue(cJSON_GetObjectItem(root, "wait_reply"));
+    cJSON* jsub     = cJSON_GetObjectItem(root, "subtitle");
+    if (!cJSON_IsString(jsub)) {
+        jsub = cJSON_GetObjectItem(root, "text");
+    }
+    std::string sub = (cJSON_IsString(jsub) && jsub->valuestring) ? jsub->valuestring : "";
+    if (sub.size() > 140) {
+        sub = sub.substr(0, 137) + "...";
+    }
     {
         std::lock_guard<std::mutex> lk(self->_mcp_mtx);
         self->_mcp_next_play_url = jurl->valuestring;
+        self->_mcp_next_subtitle = sub;
     }
     self->_mcp_play_wait_reply = wait_reply;
     cJSON_Delete(root);
@@ -2410,9 +2440,9 @@ void AppGemini::build_ui()
 
     const int top_y   = view::get_status_bar_top_offset();
     const bool is_fix = (top_y > 0);
-    const int hdr_y   = top_y + (is_fix ? 2 : 6);
-    const int stage_y = top_y + (is_fix ? 22 : 30);
-    const int stage_h = 144 - stage_y;
+    const int hdr_y   = top_y + (is_fix ? 1 : 4);
+    const int stage_y = top_y + (is_fix ? 18 : 24);
+    const int stage_h = 152 - stage_y;
 
     // App header row below system status bar (voice name on the right; volume is in the top bar)
     _lbl_badge = lv_label_create(_root_cont);
@@ -2445,8 +2475,9 @@ void AppGemini::build_ui()
     _avatar_img = lv_image_create(_stage_cont);
     if (_img_naruto_calm.data != nullptr) {
         lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        if (is_fix && _img_naruto_calm.header.h > 82) {
-            uint16_t scale = static_cast<uint16_t>((82 * 256) / _img_naruto_calm.header.h);
+        int target_h = std::max<int>(76, stage_h - 4);
+        if (_img_naruto_calm.header.h > 0) {
+            uint16_t scale = static_cast<uint16_t>((target_h * 256) / _img_naruto_calm.header.h);
             lv_image_set_scale(_avatar_img, scale);
         }
     }
@@ -2455,7 +2486,7 @@ void AppGemini::build_ui()
     lv_obj_add_event_cb(_avatar_img, on_stage_click, LV_EVENT_CLICKED, this);
 
     _face_card = lv_obj_create(_stage_cont);
-    lv_obj_set_size(_face_card, 136, is_fix ? 76 : 98);
+    lv_obj_set_size(_face_card, 176, std::max<int>(78, stage_h - 8));
     lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, 0);
     style_flat_box(_face_card, COL_CARD, 18);
     lv_obj_set_style_border_width(_face_card, 2, 0);
@@ -2490,13 +2521,13 @@ void AppGemini::build_ui()
     lv_obj_set_style_border_color(_dual_stage, lv_color_hex(COL_CARD_HI), 0);
     lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
 
-    const int slot_w        = 140;
-    const int slot_h        = std::max<int>(64, stage_h - 8);
-    const int slot_x[2]     = {6, 158};
+    const int slot_w        = 146;
+    const int slot_h        = std::max<int>(74, stage_h - 4);
+    const int slot_x[2]     = {4, 154};
     const char* slot_txt[2] = {"LIVE", "AGENT $"};
     for (int i = 0; i < 2; ++i) {
         _slot_card[i] = lv_obj_create(_dual_stage);
-        lv_obj_set_pos(_slot_card[i], slot_x[i], 4);
+        lv_obj_set_pos(_slot_card[i], slot_x[i], 2);
         lv_obj_set_size(_slot_card[i], slot_w, slot_h);
         style_flat_box(_slot_card[i], 0x0F172A, 10);
         lv_obj_set_style_border_width(_slot_card[i], 1, 0);
@@ -2505,12 +2536,12 @@ void AppGemini::build_ui()
 
         _slot_dot[i] = lv_obj_create(_slot_card[i]);
         lv_obj_set_size(_slot_dot[i], 7, 7);
-        lv_obj_set_pos(_slot_dot[i], 8, 7);
+        lv_obj_set_pos(_slot_dot[i], 7, 6);
         style_flat_box(_slot_dot[i], 0x64748B, LV_RADIUS_CIRCLE);
         lv_obj_remove_flag(_slot_dot[i], LV_OBJ_FLAG_CLICKABLE);
 
         _slot_lbl[i] = lv_label_create(_slot_card[i]);
-        lv_obj_set_pos(_slot_lbl[i], 19, 4);
+        lv_obj_set_pos(_slot_lbl[i], 17, 3);
         lv_obj_set_style_text_font(_slot_lbl[i], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(0x94A3B8), 0);
         lv_label_set_text(_slot_lbl[i], slot_txt[i]);
@@ -2518,32 +2549,36 @@ void AppGemini::build_ui()
         _dual_img[i] = lv_image_create(_slot_card[i]);
         if (_img_naruto_calm.data != nullptr) {
             lv_image_set_src(_dual_img[i], &_img_naruto_calm);
-            lv_image_set_scale(_dual_img[i], is_fix ? 84 : 96);
+            int target_h = std::max<int>(64, slot_h - 18);
+            uint16_t sc  = (_img_naruto_calm.header.h > 0)
+                               ? static_cast<uint16_t>((target_h * 256) / _img_naruto_calm.header.h)
+                               : static_cast<uint16_t>(is_fix ? 120 : 136);
+            lv_image_set_scale(_dual_img[i], sc);
         }
         lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 8);
         lv_obj_remove_flag(_dual_img[i], LV_OBJ_FLAG_CLICKABLE);
 
         _dual_face[i] = lv_obj_create(_slot_card[i]);
-        lv_obj_set_size(_dual_face[i], 88, is_fix ? 46 : 54);
-        lv_obj_align(_dual_face[i], LV_ALIGN_CENTER, 0, 9);
-        style_flat_box(_dual_face[i], COL_BG, 10);
+        lv_obj_set_size(_dual_face[i], 116, std::max<int>(54, slot_h - 24));
+        lv_obj_align(_dual_face[i], LV_ALIGN_CENTER, 0, 8);
+        style_flat_box(_dual_face[i], COL_BG, 12);
         lv_obj_set_style_border_width(_dual_face[i], 2, 0);
         lv_obj_set_style_border_color(_dual_face[i], lv_color_hex(0x24314F), 0);
         lv_obj_remove_flag(_dual_face[i], LV_OBJ_FLAG_CLICKABLE);
 
         _dual_eye_l[i] = lv_obj_create(_dual_face[i]);
-        lv_obj_set_size(_dual_eye_l[i], 12, 12);
-        lv_obj_align(_dual_eye_l[i], LV_ALIGN_CENTER, -18, -5);
+        lv_obj_set_size(_dual_eye_l[i], 15, 15);
+        lv_obj_align(_dual_eye_l[i], LV_ALIGN_CENTER, -24, -6);
         style_flat_box(_dual_eye_l[i], COL_WHITE, LV_RADIUS_CIRCLE);
 
         _dual_eye_r[i] = lv_obj_create(_dual_face[i]);
-        lv_obj_set_size(_dual_eye_r[i], 12, 12);
-        lv_obj_align(_dual_eye_r[i], LV_ALIGN_CENTER, 18, -5);
+        lv_obj_set_size(_dual_eye_r[i], 15, 15);
+        lv_obj_align(_dual_eye_r[i], LV_ALIGN_CENTER, 24, -6);
         style_flat_box(_dual_eye_r[i], COL_WHITE, LV_RADIUS_CIRCLE);
 
         _dual_mouth[i] = lv_obj_create(_dual_face[i]);
-        lv_obj_set_size(_dual_mouth[i], 24, 5);
-        lv_obj_align(_dual_mouth[i], LV_ALIGN_CENTER, 0, 12);
+        lv_obj_set_size(_dual_mouth[i], 30, 5);
+        lv_obj_align(_dual_mouth[i], LV_ALIGN_CENTER, 0, 14);
         style_flat_box(_dual_mouth[i], COL_WHITE, 3);
     }
 
@@ -2570,14 +2605,14 @@ void AppGemini::build_ui()
         "2. Save in /sd/gemini.txt on microSD\n"
         "3. Insert SD card and tap RETRY");
 
-    // Live caption / status box (y = 146 .. 184)
+    // Live caption / status box (y = 154 .. 188)
     _sub_box = lv_obj_create(_root_cont);
-    lv_obj_set_pos(_sub_box, 8, 146);
-    lv_obj_set_size(_sub_box, 304, 38);
+    lv_obj_set_pos(_sub_box, 8, 154);
+    lv_obj_set_size(_sub_box, 304, 34);
     style_flat_box(_sub_box, COL_CARD, 8);
 
     _lbl_subtitle = lv_label_create(_sub_box);
-    lv_obj_set_pos(_lbl_subtitle, 8, 4);
+    lv_obj_set_pos(_lbl_subtitle, 8, 2);
     lv_obj_set_size(_lbl_subtitle, 288, 30);
     lv_label_set_long_mode(_lbl_subtitle, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(_lbl_subtitle, LV_TEXT_ALIGN_CENTER, 0);
@@ -2962,10 +2997,10 @@ void AppGemini::refresh_face_anim(uint32_t now, SessionState st)
                 lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 8 + dy);
             } else if (_dual_face[i]) {
                 bool blink = is_act && ((now % 3800) > 3650);
-                lv_obj_set_size(_dual_eye_l[i], 12, blink ? 3 : 12);
-                lv_obj_set_size(_dual_eye_r[i], 12, blink ? 3 : 12);
-                int mh = (is_act && spk) ? (5 + std::clamp(rms / 240, 0, 12)) : 5;
-                lv_obj_set_size(_dual_mouth[i], 24, mh);
+                lv_obj_set_size(_dual_eye_l[i], 15, blink ? 3 : 15);
+                lv_obj_set_size(_dual_eye_r[i], 15, blink ? 3 : 15);
+                int mh = (is_act && spk) ? (5 + std::clamp(rms / 240, 0, 13)) : 5;
+                lv_obj_set_size(_dual_mouth[i], 30, mh);
                 lv_obj_set_style_radius(_dual_mouth[i], (mh > 9) ? 6 : 3, 0);
             }
         }
