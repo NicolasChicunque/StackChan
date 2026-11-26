@@ -60,9 +60,10 @@ jobs:
           git merge --no-edit FETCH_HEAD
 
       - name: Build ESP32-S3 firmware
+        shell: bash
         working-directory: firmware
         run: |
-          source /opt/esp/idf/export.sh
+          . /opt/esp/idf/export.sh
           idf.py set-target esp32s3
           idf.py build
           idf.py merge-bin -o "build/stackchan-${{ matrix.app.id }}-merged.bin"
