@@ -65,6 +65,7 @@ jobs:
         run: |
           . /opt/esp/idf/export.sh
           python3 ./fetch_repos.py
+          printf "CONFIG_LV_FONT_MONTSERRAT_12=y\nCONFIG_LV_FONT_MONTSERRAT_14=y\n" > sdkconfig.defaults.local
           idf.py set-target esp32s3
           idf.py build
           idf.py merge-bin -o "stackchan-${{ matrix.app.id }}-merged.bin"
