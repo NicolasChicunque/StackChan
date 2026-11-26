@@ -39,8 +39,16 @@ engineering work.
 
 4. **Handle escalation**: When the user asks for technical work, the script
    prints `[ESCALATED] Task: <summary>` and exits. Execute the requested work
-   with the main agent's tools, notify completion via `stackchan_say`, and
-   re-launch `scripts/stackchan_chat.py` if appropriate.
+   with the main agent's tools:
+   - **If you need user confirmation or a follow-up answer**: speak a concise,
+     clear summary of what you are asking using `stackchan_converse` (with
+     `gesture=""` so the firmware handles speech motion) so StackChan keeps
+     listening and delivers the user's spoken reply straight back to you with
+     full context.
+   - **Once the technical work is complete**: speak a concise summary via
+     `stackchan_say` and immediately re-launch
+     `scripts/stackchan_chat.py --lang auto --no-greeting` so StackChan stays
+     listening in silent standby without repeating the greeting.
 
 5. **Handle end**: When the user ends the session, the script exits cleanly;
    confirm briefly in chat.
