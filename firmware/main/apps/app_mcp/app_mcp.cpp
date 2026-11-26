@@ -448,12 +448,14 @@ void AppMcp::net_task_loop()
     while (_running.load()) {
         if (_play_pending.exchange(false)) {
             std::string url;
+            bool wait_reply = false;
             {
                 std::lock_guard<std::mutex> lk(_play_mtx);
-                url = _next_play_url;
+                url        = _next_play_url;
+                wait_reply = _next_play_wait_reply;
             }
             if (!url.empty()) {
-                play_wav_url(url);
+                play_wav_url(url, wait_reply);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -689,7 +691,7 @@ void AppMcp::mic_task_loop()
     _mic_exited = true;
 }
 
-void AppMcp::play_wav_url(const std::string& url)
+void AppMcp::play_wav_url(const std::string& url, bool wait_reply)
 {
     auto audio_codec = Board::GetInstance().GetAudioCodec();
     if (!audio_codec) {
@@ -877,12 +879,20 @@ void AppMcp::play_wav_url(const std::string& url)
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
-    _speak_rms          = 0;
-    _playing            = false;
-    _auto_hold_until_ms = GetHAL().millis() + 120;
-    set_status_text(_rec_ready.load() ? "Sending voice to Antigravity..."
-                                      : (_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity"));
-    GetHAL().showRgbColor(0, 48, 42);
+    _speak_rms = 0;
+    _playing   = false;
+    if (wait_reply && !_play_abort.load()) {
+        _face               = static_cast<int>(FaceExpr::Thinking);
+        _waiting_reply      = true;
+        _auto_hold_until_ms = GetHAL().millis() + REPLY_WAIT_MS;
+        set_status_text("Waiting for Antigravity reply...");
+        GetHAL().showRgbColor(64, 42, 0);
+    } else {
+        _auto_hold_until_ms = GetHAL().millis() + 120;
+        set_status_text(_rec_ready.load() ? "Sending voice to Antigravity..."
+                                          : (_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity"));
+        GetHAL().showRgbColor(0, 48, 42);
+    }
 }
 
 void AppMcp::stop_current_playback()
@@ -1252,9 +1262,13 @@ int AppMcp::handle_play(httpd_req* req)
         return ESP_OK;
     }
 
+    cJSON* jwait    = cJSON_GetObjectItem(root, "wait_reply");
+    bool wait_reply = cJSON_IsTrue(jwait);
+
     {
         std::lock_guard<std::mutex> lk(self->_play_mtx);
-        self->_next_play_url = jurl->valuestring;
+        self->_next_play_url        = jurl->valuestring;
+        self->_next_play_wait_reply = wait_reply;
     }
     cJSON_Delete(root);
 

@@ -2,7 +2,11 @@
 
 Use this guide to rebuild the voice chat setup after reformatting the computer.
 The host server is a personal fork of `migratorywhale/stackchan-mcp` with local
-changes (local Piper TTS, local Faster-Whisper ASR, single-call conversation tool).
+changes (local Piper TTS, local Faster-Whisper ASR, silent standby `/stackchanchat` loop).
+
+## Architecture Overview
+
+![How StackChan MCP Works](../../docs/stackchan-mcp-flow.svg)
 
 ## Files in this folder
 | File | Purpose |

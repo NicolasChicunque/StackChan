@@ -56,6 +56,18 @@ The firmware also includes a built-in **Gemini Live (`GEMINI`)** app that connec
 - **Simple API key setup**: Save a free Google AI Studio API key in `/sd/gemini.txt` on a FAT32 microSD card (automatically cached in NVS on first open; optional second line overrides the model ID).
 - **Menu visibility toggle**: Can be shown or hidden from `SETUP -> Apps -> App visibility`.
 
+### Native MCP Voice & Robot Bridge (`MCP`)
+
+This branch also adds a native **MCP (`AppMcp`)** app (`firmware/main/apps/app_mcp/`) that turns StackChan into a hands-free voice and robot interface for **Antigravity IDE** (see [host/stackchan-mcp/HOST_SERVER_INSTALL_GUIDE.md](host/stackchan-mcp/HOST_SERVER_INSTALL_GUIDE.md)):
+
+![How StackChan MCP Works](docs/stackchan-mcp-flow.svg)
+
+- **How the two paths work**:
+  - **Casual chat (free tier)**: `stackchan_chat.py` runs in silent standby on your PC (local Faster-Whisper ASR locked to your OS language + local Piper TTS + `gemini-3.5-flash-lite`) without consuming Antigravity IDE quota.
+  - **Engineering escalation**: When you ask to inspect/edit code, run Git/builds, use the camera, or look up live web info, it escalates to your active Antigravity conversation, which executes the task in the right workspace, replies aloud (or asks follow-ups via `stackchan_converse`), and returns StackChan to silent standby.
+- **On-device controls (`MCP -> SET`)**: `AUTO` hands-free mode, silence `PAUSE`, `MIC` sensitivity, `VOLUME`, and `MOVE` (voice-synced gentle head motion with priority for explicit server gestures `/nod`, `/shake`, `/move`, `/home`), all saved to NVS.
+- **`GEMINI` vs `MCP` at a glance**: Use **`GEMINI`** for standalone casual chat with no PC; use **`MCP`** + `/stackchanchat` when you want StackChan connected to your PC and active Antigravity project.
+
 > ⚠️ Do not forcibly rotate any movable parts connected to the motors by hand when you are unsure whether the motors are powered and under control, as this may cause hardware damage. 
 
 - Purchase link: [M5Stack Official Store](https://shop.m5stack.com/products/stackchan-kawaii-co-created-open-source-ai-desktop-robot) | [淘宝 Taobao](https://item.taobao.com/item.htm?id=1042238294510)

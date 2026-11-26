@@ -63,7 +63,7 @@ private:
 
     bool start_httpd();
     void stop_httpd();
-    void play_wav_url(const std::string& url);
+    void play_wav_url(const std::string& url, bool wait_reply = false);
     void stop_current_playback();
     void toggle_dictation();
     void toggle_auto_mode();
@@ -119,6 +119,7 @@ private:
     std::atomic<int> _speak_rms{0};
     mutable std::mutex _play_mtx;
     std::string _next_play_url;
+    bool _next_play_wait_reply = false;
 
     // Dictation recording (AUTO hands-free or DICTATE -> GET /audio/status + GET /audio)
     std::atomic<bool> _auto_mode{true};
