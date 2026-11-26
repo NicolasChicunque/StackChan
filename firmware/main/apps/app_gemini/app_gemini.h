@@ -196,6 +196,9 @@ private:
     std::string _mcp_next_play_url;
     std::string _mcp_next_subtitle;
     std::string _mcp_last_user_text;
+    std::string _mcp_last_bot_text;
+    std::string _mcp_prev_user_text;
+    std::string _mcp_prev_bot_text;
     std::string _mcp_escalation_task;
     std::string _mcp_escalation_user;
     std::string _mcp_reply_text;

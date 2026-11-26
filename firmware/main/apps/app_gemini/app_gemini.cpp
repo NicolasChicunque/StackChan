@@ -391,6 +391,9 @@ void AppGemini::onOpen()
         _mcp_context.clear();
         _mcp_next_play_url.clear();
         _mcp_last_user_text.clear();
+        _mcp_last_bot_text.clear();
+        _mcp_prev_user_text.clear();
+        _mcp_prev_bot_text.clear();
         _mcp_escalation_task.clear();
         _mcp_escalation_user.clear();
         _mcp_reply_text.clear();
@@ -1155,7 +1158,8 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                         reinterpret_cast<const unsigned char*>(b64->valuestring), b64_len);
                     if (dec_ret == 0 && out_len >= 2) {
                         if (!_mcp_wait_reply_mode.load()) {
-                            size_t samples = out_len / sizeof(int16_t);
+                            _server_turn_done = false;  // Clear any stale turnComplete (e.g. from toolResponse)
+                            size_t samples    = out_len / sizeof(int16_t);
                             _pcm_ring.push(reinterpret_cast<const int16_t*>(_b64_decode_buf), samples);
                             SessionState cur = static_cast<SessionState>(_state.load());
                             if (cur == SessionState::Thinking || cur == SessionState::Ready) {
@@ -1182,7 +1186,7 @@ void AppGemini::handle_server_json(const char* data, size_t len)
             }
         }
 
-        // Output audio transcription (live captions)
+        // Output audio transcription (live captions + rolling prev_bot for escalation context)
         cJSON* out_tr = cJSON_GetObjectItem(sc, "outputTranscription");
         if (out_tr && cJSON_IsObject(out_tr)) {
             cJSON* txt = cJSON_GetObjectItem(out_tr, "text");
@@ -1190,6 +1194,15 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                 !_mcp_wait_reply_mode.load()) {
                 bool reset = _new_turn_subtitle.exchange(false);
                 set_subtitle(txt->valuestring, !reset);
+                std::lock_guard<std::mutex> lk(_mcp_mtx);
+                if (reset) {
+                    _mcp_last_bot_text = txt->valuestring;
+                } else {
+                    _mcp_last_bot_text += txt->valuestring;
+                    if (_mcp_last_bot_text.size() > 260) {
+                        _mcp_last_bot_text = _mcp_last_bot_text.substr(_mcp_last_bot_text.size() - 260);
+                    }
+                }
             }
         }
 
@@ -1362,7 +1375,12 @@ void AppGemini::process_mic_vad()
                 _last_voice_ms   = now;
                 {
                     std::lock_guard<std::mutex> lk(_mcp_mtx);
+                    if (!_mcp_last_user_text.empty()) {
+                        _mcp_prev_user_text = _mcp_last_user_text;
+                        _mcp_prev_bot_text  = _mcp_last_bot_text;
+                    }
                     _mcp_last_user_text.clear();
+                    _mcp_last_bot_text.clear();
                 }
                 _ws->Send("{\"realtimeInput\":{\"activityStart\":{}}}");
 
@@ -2149,17 +2167,21 @@ int AppGemini::handle_mcp_escalation(httpd_req* req)
     auto* self  = static_cast<AppGemini*>(req->user_ctx);
     cJSON* root = cJSON_CreateObject();
     if (self->_mcp_escalation_ready.exchange(false)) {
-        std::string task, user;
+        std::string task, user, prev_u, prev_b;
         {
             std::lock_guard<std::mutex> lk(self->_mcp_mtx);
-            task = self->_mcp_escalation_task;
-            user = self->_mcp_escalation_user;
+            task   = self->_mcp_escalation_task;
+            user   = self->_mcp_escalation_user;
+            prev_u = self->_mcp_prev_user_text;
+            prev_b = self->_mcp_prev_bot_text;
             self->_mcp_escalation_task.clear();
             self->_mcp_escalation_user.clear();
         }
         cJSON_AddBoolToObject(root, "ready", true);
         cJSON_AddStringToObject(root, "task", task.c_str());
         cJSON_AddStringToObject(root, "user_text", user.c_str());
+        if (!prev_u.empty()) cJSON_AddStringToObject(root, "prev_user", prev_u.c_str());
+        if (!prev_b.empty()) cJSON_AddStringToObject(root, "prev_bot", prev_b.c_str());
     } else {
         cJSON_AddBoolToObject(root, "ready", false);
     }
