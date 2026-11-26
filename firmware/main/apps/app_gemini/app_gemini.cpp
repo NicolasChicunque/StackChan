@@ -1162,7 +1162,8 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                             size_t samples    = out_len / sizeof(int16_t);
                             _pcm_ring.push(reinterpret_cast<const int16_t*>(_b64_decode_buf), samples);
                             SessionState cur = static_cast<SessionState>(_state.load());
-                            if (cur == SessionState::Thinking || cur == SessionState::Ready) {
+                            if (cur == SessionState::Thinking || cur == SessionState::Ready ||
+                                _mcp_handoff_speaking.load()) {
                                 set_state(SessionState::Speaking);
                             }
                         }
@@ -1213,6 +1214,11 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                 _mcp_reply_ready = true;
                 set_state(SessionState::AgentWait);
                 set_subtitle("Reply sent to engineer...");
+            } else if (_mcp_handoff_speaking.load() &&
+                       static_cast<SessionState>(_state.load()) != SessionState::Speaking &&
+                       _pcm_ring.available() == 0) {
+                // Ignore the empty turnComplete from toolResponse while waiting for Charon's handoff audio
+                _server_turn_done = false;
             } else {
                 _server_turn_done  = true;
                 _new_turn_subtitle = true;
@@ -1456,10 +1462,15 @@ void AppGemini::net_task_loop()
                 std::lock_guard<std::mutex> lk(_mcp_mtx);
                 cid = _mcp_handoff_call_id;
             }
+            if (codec && codec->input_enabled()) {
+                codec->EnableInput(false);
+            }
+            _want_arm_listen = false;
             if (_ws && _ws->IsConnected()) {
                 _mcp_handoff_speaking   = true;
                 _mcp_handoff_started_ms = GetHAL().millis();
                 _server_turn_done       = false;
+                set_state(SessionState::Thinking);
                 if (!cid.empty()) {
                     std::string tr = "{\"toolResponse\":{\"functionResponses\":[{\"id\":\"" + cid +
                                      "\",\"name\":\"escalate_to_engineer\",\"response\":{\"status\":\"ok\"}}]}}";
@@ -1520,6 +1531,9 @@ void AppGemini::net_task_loop()
         }
 
         if (_want_arm_listen.exchange(false)) {
+            if (_mcp_handoff_speaking.load()) {
+                continue;
+            }
             if (_muted.load()) {
                 set_state(SessionState::Ready);
                 set_subtitle("Paused. Tap RESUME to talk");
@@ -1707,9 +1721,9 @@ void AppGemini::spk_task_loop()
                 frac_pos = 0.0;
             } else if (!output_active && _server_turn_done.load() &&
                        static_cast<SessionState>(_state.load()) == SessionState::Thinking) {
-                // Model completed a turn with no audio output; re-arm listening cleanly
+                // Model completed a turn with no audio output; never re-arm mic during handoff or AGENT $ wait
                 _server_turn_done = false;
-                if (!_closing.load() && !_muted.load()) {
+                if (!_mcp_handoff_speaking.load() && !_mcp_agent_active.load() && !_closing.load() && !_muted.load()) {
                     _want_arm_listen = true;
                 }
             }
