@@ -1,0 +1,104 @@
+name: Release StackChan Custom App Store
+
+on:
+  push:
+    tags:
+      - "store-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. store-v1.0.0)"
+        required: true
+        default: "store-v1.0.0"
+      store_ref:
+        description: "Branch/ref containing Custom App Store support"
+        required: false
+        default: "feat/custom-app-store"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.app.name }}
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v6.1
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - id: music
+            name: Music Player
+            branch: feat/music-player
+          - id: alarm
+            name: Alarm Clock
+            branch: feat/alarm-clock
+          - id: gemini
+            name: Gemini Live
+            branch: feat/gemini-live
+          - id: mcp
+            name: MCP Bridge
+            branch: feat/mcp-bridge
+
+    steps:
+      - name: Checkout app branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.app.branch }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Include Custom App Store in build
+        env:
+          STORE_REF: ${{ github.event.inputs.store_ref || 'feat/custom-app-store' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${STORE_REF}"
+          git merge --no-edit "origin/${STORE_REF}"
+
+      - name: Build ESP32-S3 firmware
+        working-directory: firmware
+        run: |
+          idf.py set-target esp32s3
+          idf.py build
+          idf.py merge-bin -o "build/stackchan-${{ matrix.app.id }}-merged.bin"
+          cp build/stack-chan.bin "build/stackchan-${{ matrix.app.id }}-ota.bin"
+          ls -lh "build/stackchan-${{ matrix.app.id }}-ota.bin" "build/stackchan-${{ matrix.app.id }}-merged.bin"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stackchan-${{ matrix.app.id }}
+          path: |
+            firmware/build/stackchan-${{ matrix.app.id }}-ota.bin
+            firmware/build/stackchan-${{ matrix.app.id }}-merged.bin
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum *.bin > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: StackChan Community Apps (${{ github.event.inputs.tag || github.ref_name }})
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            dist/*.bin
+            dist/SHA256SUMS.txt

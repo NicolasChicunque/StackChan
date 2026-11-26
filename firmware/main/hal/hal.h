@@ -81,6 +81,7 @@ namespace app_center {
 
 struct AppInfo_t {
     std::string name;
+    std::string version;
     std::string iconUrl;
     std::string description;
     std::string firmwareUrl;
@@ -282,7 +283,11 @@ public:
 
     /* -------------------------------- App center ------------------------------- */
     app_center::AppInfoList_t fetchAppList();
-    void launchApp(std::string_view url, std::function<void(int)> onProgress);
+    bool launchApp(std::string_view url, std::function<void(int)> onProgress);
+    bool isCustomAppStoreEnabled();
+    void setCustomAppStoreEnabled(bool enabled);
+    std::string getCustomAppStoreUrl();
+    void setCustomAppStoreUrl(std::string_view url);
 
     /* --------------------------------- EzData --------------------------------- */
     void startEzDataService(std::function<void(std::string_view)> onStartLog);

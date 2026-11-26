@@ -60,7 +60,7 @@ void AppAppCenter::onOpen()
     // Destroy loading page
     loading_page.reset();
 
-    _app_list_page = std::make_unique<view::AppListPage>(_app_list);
+    _app_list_page = std::make_unique<view::AppListPage>(_app_list, GetHAL().isCustomAppStoreEnabled());
 
     view::create_home_indicator([&]() { close(); }, 0xFFDF9A, 0x47330A);
     view::create_status_bar(0xFFDF9A, 0x47330A);
@@ -69,12 +69,50 @@ void AppAppCenter::onOpen()
 void AppAppCenter::onRunning()
 {
     if (_launch_requested) {
-        GetHAL().launchApp(_app_list[_selected_index].firmwareUrl, [&](int percent) {
+        _launch_requested = false;
+        const bool ok     = GetHAL().launchApp(_app_list[_selected_index].firmwareUrl, [&](int percent) {
             LvglLockGuard lock;
             if (_app_install_page) {
                 _app_install_page->setProgress(percent);
             }
         });
+        if (!ok) {
+            LvglLockGuard lock;
+            if (_app_install_page) {
+                _app_install_page->setError("Download failed.\nCheck Wi-Fi and try again.");
+            }
+        }
+    }
+
+    int switch_target = -1;
+    {
+        LvglLockGuard lock;
+        if (_app_list_page) {
+            switch_target = _app_list_page->checkStoreSwitch();
+        }
+    }
+
+    if (switch_target >= 0) {
+        GetHAL().setCustomAppStoreEnabled(switch_target != 0);
+
+        std::unique_ptr<view::LoadingPage> loading_page;
+        {
+            LvglLockGuard lock;
+            _app_list_page.reset();
+            view::destroy_home_indicator();
+            view::destroy_status_bar();
+            loading_page = std::make_unique<view::LoadingPage>(0xF4A354, 0x332609);
+            loading_page->setMessage("Fetching app list...");
+        }
+
+        _app_list = GetHAL().fetchAppList();
+
+        LvglLockGuard lock;
+        loading_page.reset();
+        _app_list_page = std::make_unique<view::AppListPage>(_app_list, GetHAL().isCustomAppStoreEnabled());
+        view::create_home_indicator([&]() { close(); }, 0xFFDF9A, 0x47330A);
+        view::create_status_bar(0xFFDF9A, 0x47330A);
+        return;
     }
 
     LvglLockGuard lock;
@@ -92,12 +130,20 @@ void AppAppCenter::onRunning()
         if (_app_detail_page->checkBack()) {
             mclog::tagInfo(getAppInfo().name, "back to app list");
             _app_detail_page.reset();
-            _app_list_page = std::make_unique<view::AppListPage>(_app_list);
+            _app_list_page = std::make_unique<view::AppListPage>(_app_list, GetHAL().isCustomAppStoreEnabled());
         } else if (_app_detail_page->checkLaunch()) {
             mclog::tagInfo(getAppInfo().name, "launch app");
             _app_detail_page.reset();
             _app_install_page = std::make_unique<view::AppInstallPage>(_app_list[_selected_index]);
             _launch_requested = true;
+        }
+    }
+
+    if (_app_install_page) {
+        if (_app_install_page->checkBack()) {
+            mclog::tagInfo(getAppInfo().name, "back from failed install");
+            _app_install_page.reset();
+            _app_list_page = std::make_unique<view::AppListPage>(_app_list, GetHAL().isCustomAppStoreEnabled());
         }
     }
 

@@ -5,11 +5,13 @@
  */
 #pragma once
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void start_ota_update(const char* url, void (*on_progress)(int progress));
+bool start_ota_update(const char* url, void (*on_progress)(int progress));
 
 #ifdef __cplusplus
 }

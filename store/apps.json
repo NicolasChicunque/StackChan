@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Music Player",
+    "version": "1.0.0",
+    "description": "Play MP3 music directly from the MicroSD card with track browsing, album controls, and background playback.",
+    "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-music-ota.bin"
+  },
+  {
+    "name": "Alarm Clock",
+    "version": "1.0.0",
+    "description": "Native alarm clock with RTC sync, countdown timer, stopwatch with lap splits, synth tones, and MicroSD MP3 alarms.",
+    "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-alarm-ota.bin"
+  },
+  {
+    "name": "Gemini Live",
+    "version": "1.0.0",
+    "description": "Real-time hands-free voice assistant powered by Gemini Live API with adaptive VAD and configurable voice settings.",
+    "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-gemini-ota.bin"
+  },
+  {
+    "name": "MCP Bridge",
+    "version": "1.0.0",
+    "description": "Voice and robot bridge connecting StackChan to desktop AI agents over MCP for speech, expressions, camera, and motion.",
+    "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-mcp-ota.bin"
+  }
+]
