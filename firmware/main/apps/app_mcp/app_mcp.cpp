@@ -47,6 +47,9 @@ constexpr const char* KEY_AUTO       = "auto_mode";
 constexpr const char* KEY_PAUSE_MS   = "pause_ms";
 constexpr const char* KEY_MIC_SENS   = "mic_sens";
 constexpr const char* KEY_SPEAK_MOVE = "speak_move";
+constexpr const char* KEY_VOICE      = "live_voice";
+constexpr const char* LIVE_VOICES[5] = {"Puck", "Kore", "Aoede", "Fenrir", "Zephyr"};
+constexpr int LIVE_VOICE_COUNT       = 5;
 constexpr int W                      = 320;
 constexpr int H                      = 240;
 constexpr int Y_HOME_DEG             = 45;
@@ -247,6 +250,7 @@ void AppMcp::onOpen()
         _silence_stop_ms = static_cast<uint32_t>(std::clamp(p, 500, 4000));
         _mic_sens        = std::clamp(sens, 0, 2);
         _speak_move      = s.GetBool(KEY_SPEAK_MOVE, true);
+        _voice_idx       = std::clamp<int>(s.GetInt(KEY_VOICE, 0), 0, LIVE_VOICE_COUNT - 1);
     }
     _settings_open = false;
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume.load()), false);
@@ -967,6 +971,15 @@ void AppMcp::set_speak_move(bool enabled)
     refresh_settings_ui();
 }
 
+void AppMcp::cycle_voice(int delta)
+{
+    int next   = (_voice_idx.load() + delta + LIVE_VOICE_COUNT) % LIVE_VOICE_COUNT;
+    _voice_idx = next;
+    Settings s(NVS_NS, true);
+    s.SetInt(KEY_VOICE, next);
+    refresh_settings_ui();
+}
+
 void AppMcp::set_settings_open(bool open)
 {
     _settings_open = open;
@@ -1008,6 +1021,10 @@ void AppMcp::refresh_settings_ui()
     }
     if (_btn_move_on) {
         lv_obj_set_style_bg_color(_btn_move_on, lv_color_hex(mv ? COL_TEAL_DK : COL_CARD_HI), 0);
+    }
+    if (_lbl_set_voice) {
+        int vi = std::clamp(_voice_idx.load(), 0, LIVE_VOICE_COUNT - 1);
+        lv_label_set_text(_lbl_set_voice, LIVE_VOICES[vi]);
     }
 }
 
@@ -1194,6 +1211,8 @@ int AppMcp::handle_audio_status(httpd_req* req)
     cJSON_AddStringToObject(root, "agent_mode", amode_str);
     cJSON_AddStringToObject(root, "ip", ip.c_str());
     cJSON_AddStringToObject(root, "face", face_name(static_cast<FaceExpr>(self->_face.load())));
+    int vi = std::clamp(self->_voice_idx.load(), 0, LIVE_VOICE_COUNT - 1);
+    cJSON_AddStringToObject(root, "voice", LIVE_VOICES[vi]);
     char* s = cJSON_PrintUnformatted(root);
     send_json(req, s ? s : "{}");
     if (s) cJSON_free(s);
@@ -1817,6 +1836,31 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
+    // Row 4: Live Voice preset (Puck / Kore / Aoede / Fenrir / Zephyr)
+    lv_obj_t* row_voice = make_row(row_y0 + row_step * 3, "VOICE");
+    lv_obj_t* btn_vm    = make_btn(row_voice, 114, btn_ry, 44, btn_rh, LV_SYMBOL_LEFT, COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_vm,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->cycle_voice(-1);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _lbl_set_voice = lv_label_create(row_voice);
+    lv_obj_set_pos(_lbl_set_voice, 160, lbl_ry);
+    lv_obj_set_width(_lbl_set_voice, 80);
+    lv_obj_set_style_text_align(_lbl_set_voice, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(_lbl_set_voice, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lbl_set_voice, lv_color_hex(0x38BDF8), 0);
+
+    lv_obj_t* btn_vp = make_btn(row_voice, 242, btn_ry, 44, btn_rh, LV_SYMBOL_RIGHT, COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        btn_vp,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->cycle_voice(1);
+        },
+        LV_EVENT_CLICKED, this);
+
     refresh_settings_ui();
 
     // Camera preview overlay (shown when a snapshot is taken via MCP; tap to close)
@@ -1916,6 +1960,7 @@ void AppMcp::destroy_ui()
         _settings_panel = nullptr;
         _lbl_set_pause  = nullptr;
         _lbl_set_vol    = nullptr;
+        _lbl_set_voice  = nullptr;
         for (int i = 0; i < 3; ++i) _btn_sens[i] = nullptr;
         _btn_move_off   = nullptr;
         _btn_move_on    = nullptr;
