@@ -12,6 +12,11 @@ Prioritized engineering roadmap for the StackChan custom firmware (`custom/narut
 - Official Google AI Studio pricing confirms **Gemini Live API includes a Free Tier** (audio input & output free of charge within rate/session limits).
 - Eliminates the 1.5 s silence pause + full-utterance WAV upload + local ASR + TTS round-trip on the `FREE` path.
 
+### Design Principle (Complementary + Primary/Fallback)
+- **Non-destructive:** Do **not** replace or break the current working HTTP WAV + Faster-Whisper + Interactions API + local Piper/Edge TTS flow.
+- **Complementary modes:** Ship Gemini Live API as a parallel/selectable mode alongside the current bridge.
+- **Best-wins priority with fallback:** After real-world testing, set whichever mode performs better (latency, stability, voice quality, escalation reliability) as the **primary** mode, and keep the other as an automatic **fallback / backup**.
+
 ### Architecture Plan
 1. **PC Bridge (`stackchan-mcp`):**
    - Add a `gemini-live` voice loop mode using `google-genai` Live WebSocket API (native audio in/out + live transcription + `escalate_to_engineer` tool/function call).
