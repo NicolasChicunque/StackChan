@@ -185,6 +185,7 @@ private:
     std::atomic<bool> _mcp_end_pending{false};
     std::atomic<bool> _pause_pending{false};
     std::atomic<bool> _mute_after_speak{false};
+    std::atomic<bool> _voice_preview_pending{false};
     std::atomic<bool> _mcp_wait_reply_mode{false};
     std::atomic<bool> _mcp_escalation_ready{false};
     std::atomic<bool> _mcp_reply_ready{false};

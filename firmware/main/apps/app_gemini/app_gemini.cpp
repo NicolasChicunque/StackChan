@@ -350,6 +350,7 @@ void AppGemini::onOpen()
     _mcp_end_pending        = false;
     _pause_pending          = false;
     _mute_after_speak       = false;
+    _voice_preview_pending  = false;
     _mcp_wait_reply_mode    = false;
     _mcp_escalation_ready   = false;
     _mcp_reply_ready        = false;
@@ -1099,6 +1100,16 @@ bool AppGemini::connect_live_session()
     if (_mcp_agent_active.load() && !_mcp_wait_reply_mode.load()) {
         set_state(SessionState::AgentWait);
         set_subtitle("Waiting for lead engineer...");
+    } else if (_voice_preview_pending.exchange(false) && _ws && _ws->IsConnected()) {
+        // Speak a brief voice preview with the newly applied voice + pitch; spk_task_loop will re-arm or stay muted
+        _server_turn_done = false;
+        set_state(SessionState::Thinking);
+        set_subtitle("Preview: " + _voice_name + "...");
+        std::string preview_msg =
+            "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":"
+            "\"Di exactamente esta frase corta y nada mas: Hola, ahora hablo con la voz " +
+            _voice_name + ".\"}]}],\"turnComplete\":true}}";
+        _ws->Send(preview_msg);
     } else if (_muted.load()) {
         set_state(SessionState::Ready);
         set_subtitle("Paused. Tap RESUME to talk");
@@ -2512,7 +2523,8 @@ void AppGemini::close_settings()
             _muted = false;
         }
         set_subtitle("Applying voice: " + _voice_name + "...");
-        _want_connect = true;
+        _voice_preview_pending = true;
+        _want_connect          = true;
     } else if (resume_mic) {
         _muted           = false;
         _want_arm_listen = true;
