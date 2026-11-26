@@ -56,7 +56,7 @@ constexpr const char* KEY_VOICE     = "voice";
 constexpr const char* KEY_PITCH     = "pitch_pct";
 constexpr const char* DEFAULT_MODEL = "gemini-3.8-live";
 constexpr const char* DEFAULT_VOICE = "Puck";
-constexpr int DEFAULT_PITCH_PCT     = 110;
+constexpr int DEFAULT_PITCH_PCT     = 100;
 constexpr int MIN_PITCH_PCT         = 85;
 constexpr int MAX_PITCH_PCT         = 130;
 constexpr int PITCH_STEP_PCT        = 5;
@@ -825,14 +825,10 @@ bool AppGemini::send_setup_message(bool include_search, bool include_mcp_tools)
     cJSON* sys_inst = cJSON_AddObjectToObject(setup, "systemInstruction");
     cJSON* parts    = cJSON_AddArrayToObject(sys_inst, "parts");
     cJSON* part0    = cJSON_CreateObject();
-    const bool naruto_mode =
-        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
     std::string sys_prompt =
-        naruto_mode
-            ? "You are StackChan, an energetic, upbeat, friendly desktop robot companion. Keep answers concise "
-              "(1-2 short natural sentences) in the user's spoken language."
-            : "You are StackChan, a friendly little desktop robot companion. Keep answers concise "
-              "(1-2 short natural sentences) and lively in the user's spoken language.";
+        "You are StackChan, a calm, friendly, and conversational desktop robot companion. "
+        "Speak in a relaxed, natural, balanced tone — never overly intense or hyper. "
+        "Keep replies concise (1-2 short natural sentences) in the user's spoken language.";
     if (include_search) {
         sys_prompt += " You have live Google Search enabled; use it for current news, weather, dates, and live facts.";
     }
