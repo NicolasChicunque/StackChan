@@ -9,18 +9,25 @@
 #include <lvgl.h>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
 
 class WebSocket;
+struct httpd_req;
 
 /**
- * @brief Native Gemini Live API voice assistant app for StackChan.
- * Connects directly over Wi-Fi (WSS) to Gemini Live API using a free-tier
- * Google AI Studio API key loaded from /sd/gemini.txt (and cached in NVS).
- * Uses tap-to-talk (manual activityStart/activityEnd) to save Free Tier quota
- * and avoid acoustic echo on CoreS3.
+ * @brief Unified Native Gemini Live API + Auto-Attach MCP Bridge app for StackChan.
+ *
+ * Standalone (default): connects directly over Wi-Fi (WSS) to Gemini 3.8 Live
+ * using /sd/config/gemini.txt (cached in NVS) with 1 big avatar.
+ *
+ * MCP Attached (when /stackchanchat sends POST /mcp/attach heartbeat):
+ * automatically switches to a 2-avatar layout (Left: LIVE <Voice> Cyan,
+ * Right: AGENT $ Amber), enables the `escalate_to_engineer` tool on the
+ * ESP32-native Gemini Live session, and serves HTTP :80 (/play, /move, /nod,
+ * /shake, /home, /face, /mcp/escalation, /mcp/reply) until detached or lease expires.
  */
 class AppGemini : public mooncake::AppAbility {
 public:
@@ -42,7 +49,15 @@ private:
         Hearing,    // Voice detected: streaming audio to Gemini
         Thinking,   // Pause detected: waiting for Gemini reply
         Speaking,   // Playing Gemini voice reply
+        AgentWait,  // Escalated to PC coding agent (mic OFF, right AGENT $ avatar lit)
         Error,
+    };
+
+    struct MotionCmd {
+        std::string kind;  // move, nod, shake, home
+        int x_deg  = 0;
+        int y_deg  = 45;
+        int speed  = 500;
     };
 
     /* ----------------------- PSRAM PCM Ring Buffer ------------------------ */
@@ -79,10 +94,33 @@ private:
 
     bool connect_live_session();
     void disconnect_live_session();
-    bool send_setup_message(bool include_search);
+    bool send_setup_message(bool include_search, bool include_mcp_tools);
     bool send_pcm16k_chunk(const int16_t* pcm, size_t samples);
     void handle_server_json(const char* data, size_t len);
     void process_mic_vad();
+
+    /* ------------------------- MCP HTTP Bridge ---------------------------- */
+    bool start_httpd();
+    void stop_httpd();
+    void play_http_wav(const std::string& url, bool wait_reply_after);
+    void process_motion_cmds();
+    void run_gesture_step(uint32_t now);
+
+    static int handle_audio_status(httpd_req* req);
+    static int handle_playback_status(httpd_req* req);
+    static int handle_play(httpd_req* req);
+    static int handle_mcp_attach(httpd_req* req);
+    static int handle_mcp_detach(httpd_req* req);
+    static int handle_mcp_escalation(httpd_req* req);
+    static int handle_mcp_wait_reply(httpd_req* req);
+    static int handle_mcp_reply(httpd_req* req);
+    static int handle_agent_mode(httpd_req* req);
+    static int handle_listen_resume(httpd_req* req);
+    static int handle_move(httpd_req* req);
+    static int handle_nod(httpd_req* req);
+    static int handle_shake(httpd_req* req);
+    static int handle_home(httpd_req* req);
+    static int handle_face(httpd_req* req);
 
     /* ------------------------- User Actions ------------------------------- */
     void on_primary_button();
@@ -129,6 +167,40 @@ private:
     std::atomic<bool> _new_turn_subtitle{true};
     std::atomic<int> _audio_rms{0};
 
+    // MCP Bridge State (auto-attaches on POST /mcp/attach, auto-detaches on lease expiry)
+    void* _httpd = nullptr;
+    std::atomic<bool> _httpd_ok{false};
+    std::atomic<bool> _mcp_attached{false};
+    std::atomic<bool> _mcp_agent_active{false};
+    std::atomic<uint32_t> _mcp_lease_until_ms{0};
+    std::atomic<bool> _mcp_handoff_pending{false};
+    std::atomic<bool> _mcp_end_pending{false};
+    std::atomic<bool> _mcp_wait_reply_mode{false};
+    std::atomic<bool> _mcp_escalation_ready{false};
+    std::atomic<bool> _mcp_reply_ready{false};
+    std::atomic<bool> _mcp_playing_wav{false};
+    std::atomic<bool> _mcp_play_pending{false};
+    std::atomic<bool> _mcp_play_abort{false};
+    std::atomic<uint32_t> _mcp_play_started_ms{0};
+    std::atomic<bool> _mcp_play_wait_reply{false};
+    mutable std::mutex _mcp_mtx;
+    std::string _ip_str;
+    std::string _mcp_context;
+    std::string _mcp_next_play_url;
+    std::string _mcp_last_user_text;
+    std::string _mcp_escalation_task;
+    std::string _mcp_escalation_user;
+    std::string _mcp_reply_text;
+    std::string _mcp_handoff_call_id;
+    std::string _mcp_handoff_call_name;
+
+    // Motion queue (for MCP /move, /nod, /shake, /home)
+    mutable std::mutex _motion_mtx;
+    std::deque<MotionCmd> _motion_cmds;
+    int _gesture_type      = 0;  // 0=none, 1=nod, 2=shake
+    int _gesture_step      = 0;
+    uint32_t _gesture_next = 0;
+
     std::unique_ptr<WebSocket> _ws;
     PcmRingBuffer _pcm_ring;
     uint8_t* _b64_decode_buf    = nullptr;
@@ -153,6 +225,8 @@ private:
     uint32_t _last_led_ms       = 0;
     uint32_t _listen_start_ms   = 0;
     int _last_rendered_state    = -1;
+    bool _last_rendered_mcp     = false;
+    bool _last_rendered_agent   = false;
     std::string _last_rendered_sub;
 
     /* ---------------------------- LVGL Widgets ---------------------------- */
@@ -169,6 +243,17 @@ private:
     lv_obj_t* _face_eye_l       = nullptr;
     lv_obj_t* _face_eye_r       = nullptr;
     lv_obj_t* _face_mouth       = nullptr;
+
+    // Dual-avatar MCP stage (shown automatically only while _mcp_attached == true)
+    lv_obj_t* _dual_stage       = nullptr;
+    lv_obj_t* _slot_card[2]     = {nullptr, nullptr};
+    lv_obj_t* _slot_dot[2]      = {nullptr, nullptr};
+    lv_obj_t* _slot_lbl[2]      = {nullptr, nullptr};
+    lv_obj_t* _dual_img[2]      = {nullptr, nullptr};
+    lv_obj_t* _dual_face[2]     = {nullptr, nullptr};
+    lv_obj_t* _dual_eye_l[2]    = {nullptr, nullptr};
+    lv_obj_t* _dual_eye_r[2]    = {nullptr, nullptr};
+    lv_obj_t* _dual_mouth[2]    = {nullptr, nullptr};
 
     lv_obj_t* _setup_card       = nullptr;
     lv_obj_t* _lbl_setup_body   = nullptr;

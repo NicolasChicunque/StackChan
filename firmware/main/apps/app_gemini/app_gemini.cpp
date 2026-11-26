@@ -17,8 +17,12 @@
 #include <audio/audio_codec.h>
 #include <web_socket.h>
 #include <network_interface.h>
+#include <wifi_manager.h>
 
 #include <cJSON.h>
+#include <esp_crt_bundle.h>
+#include <esp_http_client.h>
+#include <esp_http_server.h>
 #include <mbedtls/base64.h>
 #include <nvs.h>
 #include <esp_heap_caps.h>
@@ -103,6 +107,7 @@ constexpr uint32_t COL_CARD         = 0x151B2E;
 constexpr uint32_t COL_CARD_HI      = 0x232C4A;
 constexpr uint32_t COL_GEMINI_BLUE  = 0x9B5DE5;
 constexpr uint32_t COL_GEMINI_PURP  = 0xC77DFF;
+constexpr uint32_t COL_CYAN         = 0x38BDF8;
 constexpr uint32_t COL_GREEN        = 0x22C55E;
 constexpr uint32_t COL_GREEN_DK     = 0x14532D;
 constexpr uint32_t COL_AMBER        = 0xF59E0B;
@@ -111,6 +116,53 @@ constexpr uint32_t COL_RED_DK       = 0x7F1D1D;
 constexpr uint32_t COL_TEXT         = 0xE2E8F0;
 constexpr uint32_t COL_DIM          = 0x94A3B8;
 constexpr uint32_t COL_WHITE        = 0xFFFFFF;
+constexpr int Y_HOME_DEG            = 45;
+
+inline int deg_to_yaw(int deg)
+{
+    return std::clamp(deg, -128, 128) * 10;
+}
+
+inline int deg_to_pitch(int deg)
+{
+    return (45 - std::clamp(deg, 0, 90)) * 10;
+}
+
+inline uint16_t rd_u16(const uint8_t* p)
+{
+    return static_cast<uint16_t>(p[0] | (static_cast<uint16_t>(p[1]) << 8));
+}
+
+inline uint32_t rd_u32(const uint8_t* p)
+{
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+bool read_http_body(httpd_req_t* req, std::string& out, size_t max_len = 2048)
+{
+    if (req->content_len <= 0 || static_cast<size_t>(req->content_len) > max_len) {
+        return false;
+    }
+    out.resize(static_cast<size_t>(req->content_len));
+    size_t got = 0;
+    while (got < out.size()) {
+        int r = httpd_req_recv(req, out.data() + got, out.size() - got);
+        if (r <= 0) {
+            return false;
+        }
+        got += static_cast<size_t>(r);
+    }
+    return true;
+}
+
+void send_http_json(httpd_req_t* req, const char* json, const char* status = "200 OK")
+{
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+}
 
 void style_flat_box(lv_obj_t* obj, uint32_t bg_hex, int radius = 0)
 {
@@ -278,9 +330,41 @@ void AppGemini::onOpen()
     _speech_start_ms      = 0;
     _last_voice_ms        = 0;
     _last_rendered_state  = -1;
+    _last_rendered_mcp    = false;
+    _last_rendered_agent  = false;
     _last_rendered_sub.clear();
     _settings_open        = false;
     _voice_dirty          = false;
+
+    _httpd_ok             = false;
+    _mcp_attached         = false;
+    _mcp_agent_active     = false;
+    _mcp_lease_until_ms   = 0;
+    _mcp_handoff_pending  = false;
+    _mcp_end_pending      = false;
+    _mcp_wait_reply_mode  = false;
+    _mcp_escalation_ready = false;
+    _mcp_reply_ready      = false;
+    _mcp_playing_wav      = false;
+    _mcp_play_pending     = false;
+    _mcp_play_abort       = false;
+    _mcp_play_started_ms  = 0;
+    _mcp_play_wait_reply  = false;
+    _gesture_type         = 0;
+    _gesture_step         = 0;
+    _gesture_next         = 0;
+    {
+        std::lock_guard<std::mutex> lk(_mcp_mtx);
+        _ip_str.clear();
+        _mcp_context.clear();
+        _mcp_next_play_url.clear();
+        _mcp_last_user_text.clear();
+        _mcp_escalation_task.clear();
+        _mcp_escalation_user.clear();
+        _mcp_reply_text.clear();
+        _mcp_handoff_call_id.clear();
+        _mcp_handoff_call_name.clear();
+    }
 
     _volume = std::clamp(static_cast<int>(GetHAL().getSpeakerVolume()), 10, 100);
 
@@ -332,6 +416,25 @@ void AppGemini::onRunning()
 {
     uint32_t now = GetHAL().millis();
 
+    process_motion_cmds();
+    run_gesture_step(now);
+    GetStackChan().update();
+
+    // Auto-detach MCP mode cleanly when /stackchanchat heartbeat lease expires
+    if (_mcp_attached.load()) {
+        uint32_t lease = _mcp_lease_until_ms.load();
+        if (lease != 0 && static_cast<int32_t>(now - lease) >= 0) {
+            ESP_LOGI(TAG, "MCP heartbeat lease expired; returning to standalone GEMINI mode");
+            _mcp_attached         = false;
+            _mcp_agent_active     = false;
+            _mcp_wait_reply_mode  = false;
+            _mcp_escalation_ready = false;
+            _mcp_reply_ready      = false;
+            _mcp_lease_until_ms   = 0;
+            _want_connect         = true;
+        }
+    }
+
     // Auto-stop hearing safety cap (30 s)
     SessionState st = static_cast<SessionState>(_state.load());
     if (st == SessionState::Hearing && _speech_start_ms > 0 && (now - _speech_start_ms) >= MAX_LISTEN_MS) {
@@ -358,7 +461,9 @@ void AppGemini::onClose()
 {
     mclog::tagInfo(getAppInfo().name, "on close");
 
-    _closing = true;
+    _closing        = true;
+    _mcp_play_abort = true;
+    stop_httpd();
     stop_tasks();
 
     auto* codec = Board::GetInstance().GetAudioCodec();
@@ -649,7 +754,7 @@ void AppGemini::spk_task_entry(void* arg)
     vTaskDelete(nullptr);
 }
 
-bool AppGemini::send_setup_message(bool include_search)
+bool AppGemini::send_setup_message(bool include_search, bool include_mcp_tools)
 {
     if (!_ws || !_ws->IsConnected()) {
         return false;
@@ -668,18 +773,53 @@ bool AppGemini::send_setup_message(bool include_search)
     cJSON* modalities = cJSON_AddArrayToObject(gen_cfg, "responseModalities");
     cJSON_AddItemToArray(modalities, cJSON_CreateString("AUDIO"));
 
-    // Select energetic youthful male voice (default: Puck)
+    // Select voice preset
     cJSON* speech_cfg = cJSON_AddObjectToObject(gen_cfg, "speechConfig");
     cJSON* voice_cfg  = cJSON_AddObjectToObject(speech_cfg, "voiceConfig");
     cJSON* prebuilt   = cJSON_AddObjectToObject(voice_cfg, "prebuiltVoiceConfig");
     cJSON_AddStringToObject(prebuilt, "voiceName", _voice_name.empty() ? DEFAULT_VOICE : _voice_name.c_str());
 
-    // Optionally enable Grounding with Google Search (auto-falls back if Free Tier quota rejects it)
-    if (include_search) {
-        cJSON* tools       = cJSON_AddArrayToObject(setup, "tools");
-        cJSON* search_tool = cJSON_CreateObject();
-        cJSON_AddObjectToObject(search_tool, "googleSearch");
-        cJSON_AddItemToArray(tools, search_tool);
+    // Tools: optional Google Search + optional MCP escalation tools when /stackchanchat is attached
+    if (include_search || include_mcp_tools) {
+        cJSON* tools = cJSON_AddArrayToObject(setup, "tools");
+        if (include_search) {
+            cJSON* search_tool = cJSON_CreateObject();
+            cJSON_AddObjectToObject(search_tool, "googleSearch");
+            cJSON_AddItemToArray(tools, search_tool);
+        }
+        if (include_mcp_tools) {
+            cJSON* fn_wrap = cJSON_CreateObject();
+            cJSON* fns     = cJSON_AddArrayToObject(fn_wrap, "functionDeclarations");
+
+            // escalate_to_engineer(task)
+            cJSON* fn_esc = cJSON_CreateObject();
+            cJSON_AddStringToObject(fn_esc, "name", "escalate_to_engineer");
+            cJSON_AddStringToObject(
+                fn_esc, "description",
+                "Hand off a coding, repository, file, git, build, flash, project architecture, or "
+                "relay-to-engineer request to the PC lead engineer agent.");
+            cJSON* params = cJSON_AddObjectToObject(fn_esc, "parameters");
+            cJSON_AddStringToObject(params, "type", "OBJECT");
+            cJSON* props  = cJSON_AddObjectToObject(params, "properties");
+            cJSON* p_task = cJSON_AddObjectToObject(props, "task");
+            cJSON_AddStringToObject(p_task, "type", "STRING");
+            cJSON_AddStringToObject(p_task, "description", "Concise English summary of the task for the coding agent.");
+            cJSON* req = cJSON_AddArrayToObject(params, "required");
+            cJSON_AddItemToArray(req, cJSON_CreateString("task"));
+            cJSON_AddItemToArray(fns, fn_esc);
+
+            // end_chat()
+            cJSON* fn_end = cJSON_CreateObject();
+            cJSON_AddStringToObject(fn_end, "name", "end_chat");
+            cJSON_AddStringToObject(fn_end, "description",
+                                    "Detach MCP mode when the user says goodbye, stop, terminamos, or end chat.");
+            cJSON* end_params = cJSON_AddObjectToObject(fn_end, "parameters");
+            cJSON_AddStringToObject(end_params, "type", "OBJECT");
+            cJSON_AddObjectToObject(end_params, "properties");
+            cJSON_AddItemToArray(fns, fn_end);
+
+            cJSON_AddItemToArray(tools, fn_wrap);
+        }
     }
 
     cJSON* sys_inst = cJSON_AddObjectToObject(setup, "systemInstruction");
@@ -687,23 +827,32 @@ bool AppGemini::send_setup_message(bool include_search)
     cJSON* part0    = cJSON_CreateObject();
     const bool naruto_mode =
         (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
-    const char* sys_prompt =
+    std::string sys_prompt =
         naruto_mode
-            ? (include_search
-                   ? "You are StackChan in Naruto mode: an energetic, upbeat, determined young ninja desktop "
-                     "companion. Speak with lively, youthful male energy, keeping answers concise and natural in "
-                     "the user's language. You have live Google Search enabled; use it for current news, weather, "
-                     "dates, and real-time facts."
-                   : "You are StackChan in Naruto mode: an energetic, upbeat, determined young ninja desktop "
-                     "companion. Speak with lively, youthful male energy, keeping answers concise and natural in "
-                     "the user's language.")
-            : (include_search
-                   ? "You are StackChan, a friendly little desktop robot companion. Keep answers concise, natural, "
-                     "and lively in the user's language. You have live Google Search enabled; use it for current "
-                     "news, weather, dates, and real-time facts."
-                   : "You are StackChan, a friendly little desktop robot companion. Keep answers concise, natural, "
-                     "and lively in the user's language.");
-    cJSON_AddStringToObject(part0, "text", sys_prompt);
+            ? "You are StackChan, an energetic, upbeat, friendly desktop robot companion. Keep answers concise "
+              "(1-2 short natural sentences) in the user's spoken language."
+            : "You are StackChan, a friendly little desktop robot companion. Keep answers concise "
+              "(1-2 short natural sentences) and lively in the user's spoken language.";
+    if (include_search) {
+        sys_prompt += " You have live Google Search enabled; use it for current news, weather, dates, and live facts.";
+    }
+    if (include_mcp_tools) {
+        sys_prompt +=
+            " You are linked to the user's PC coding agent (lead engineer / Antigravity). "
+            "If the user asks for code edits, repository/file/log inspection, git/build/flash commands, "
+            "project architecture changes, OR asks you to pass/relay/tell anything to the engineer or agent, "
+            "IMMEDIATELY call `escalate_to_engineer` without replying conversationally first. "
+            "If the user says goodbye, terminamos, or end chat, call `end_chat`.";
+        std::string ctx;
+        {
+            std::lock_guard<std::mutex> lk(_mcp_mtx);
+            ctx = _mcp_context;
+        }
+        if (!ctx.empty()) {
+            sys_prompt += " Recent context from lead engineer: " + ctx;
+        }
+    }
+    cJSON_AddStringToObject(part0, "text", sys_prompt.c_str());
     cJSON_AddItemToArray(parts, part0);
 
     // Disable automatic VAD so the robot uses clean client-side adaptive VAD (zero echo, minimal Free Tier quota)
@@ -711,7 +860,8 @@ bool AppGemini::send_setup_message(bool include_search)
     cJSON* aad    = cJSON_AddObjectToObject(rt_cfg, "automaticActivityDetection");
     cJSON_AddBoolToObject(aad, "disabled", true);
 
-    // Enable output audio transcription for live captions on the 2.0-inch display
+    // Enable both input and output audio transcription
+    cJSON_AddObjectToObject(setup, "inputAudioTranscription");
     cJSON_AddObjectToObject(setup, "outputAudioTranscription");
 
     char* printed = cJSON_PrintUnformatted(root);
@@ -722,8 +872,8 @@ bool AppGemini::send_setup_message(bool include_search)
 
     std::string payload(printed);
     cJSON_free(printed);
-    ESP_LOGI(TAG, "Sending Gemini Live setup (%s, search=%d, voice=%s)", model_path.c_str(),
-             include_search ? 1 : 0, _voice_name.c_str());
+    ESP_LOGI(TAG, "Sending Gemini Live setup (%s, search=%d, mcp=%d, voice=%s)", model_path.c_str(),
+             include_search ? 1 : 0, include_mcp_tools ? 1 : 0, _voice_name.c_str());
     return _ws->Send(payload);
 }
 
@@ -740,6 +890,16 @@ bool AppGemini::connect_live_session()
 
     if (_closing.load()) {
         return false;
+    }
+
+    // Start lightweight MCP HTTP listener on port 80 once Wi-Fi is ready
+    {
+        auto ip = WifiManager::GetInstance().GetIpAddress();
+        std::lock_guard<std::mutex> lk(_mcp_mtx);
+        _ip_str = ip;
+    }
+    if (!_httpd) {
+        _httpd_ok = start_httpd();
     }
 
     auto* network = Board::GetInstance().GetNetwork();
@@ -840,7 +1000,7 @@ bool AppGemini::connect_live_session()
             return false;
         }
 
-        if (!send_setup_message(try_search)) {
+        if (!send_setup_message(try_search, _mcp_attached.load())) {
             set_error("Failed to send setup message");
             disconnect_live_session();
             return false;
@@ -875,7 +1035,10 @@ bool AppGemini::connect_live_session()
         return false;
     }
 
-    if (_muted.load()) {
+    if (_mcp_agent_active.load()) {
+        set_state(SessionState::AgentWait);
+        set_subtitle("Waiting for lead engineer...");
+    } else if (_muted.load()) {
         set_state(SessionState::Ready);
         set_subtitle("Paused. Tap RESUME to talk");
     } else {
@@ -950,11 +1113,13 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                         _b64_decode_buf, _b64_decode_cap, &out_len,
                         reinterpret_cast<const unsigned char*>(b64->valuestring), b64_len);
                     if (dec_ret == 0 && out_len >= 2) {
-                        size_t samples = out_len / sizeof(int16_t);
-                        _pcm_ring.push(reinterpret_cast<const int16_t*>(_b64_decode_buf), samples);
-                        SessionState cur = static_cast<SessionState>(_state.load());
-                        if (cur == SessionState::Thinking || cur == SessionState::Ready) {
-                            set_state(SessionState::Speaking);
+                        if (!_mcp_wait_reply_mode.load()) {
+                            size_t samples = out_len / sizeof(int16_t);
+                            _pcm_ring.push(reinterpret_cast<const int16_t*>(_b64_decode_buf), samples);
+                            SessionState cur = static_cast<SessionState>(_state.load());
+                            if (cur == SessionState::Thinking || cur == SessionState::Ready) {
+                                set_state(SessionState::Speaking);
+                            }
                         }
                     } else if (dec_ret != 0) {
                         ESP_LOGW(TAG, "Base64 decode failed (ret=%d, in=%u)", dec_ret, static_cast<unsigned>(b64_len));
@@ -963,11 +1128,25 @@ void AppGemini::handle_server_json(const char* data, size_t len)
             }
         }
 
+        // Input audio transcription (user speech text for escalation & --wait-reply)
+        cJSON* in_tr = cJSON_GetObjectItem(sc, "inputTranscription");
+        if (in_tr && cJSON_IsObject(in_tr)) {
+            cJSON* txt = cJSON_GetObjectItem(in_tr, "text");
+            if (txt && cJSON_IsString(txt) && txt->valuestring && txt->valuestring[0] != '\0') {
+                std::lock_guard<std::mutex> lk(_mcp_mtx);
+                _mcp_last_user_text += txt->valuestring;
+                if (_mcp_wait_reply_mode.load()) {
+                    _mcp_reply_text += txt->valuestring;
+                }
+            }
+        }
+
         // Output audio transcription (live captions)
         cJSON* out_tr = cJSON_GetObjectItem(sc, "outputTranscription");
         if (out_tr && cJSON_IsObject(out_tr)) {
             cJSON* txt = cJSON_GetObjectItem(out_tr, "text");
-            if (txt && cJSON_IsString(txt) && txt->valuestring && txt->valuestring[0] != '\0') {
+            if (txt && cJSON_IsString(txt) && txt->valuestring && txt->valuestring[0] != '\0' &&
+                !_mcp_wait_reply_mode.load()) {
                 bool reset = _new_turn_subtitle.exchange(false);
                 set_subtitle(txt->valuestring, !reset);
             }
@@ -975,8 +1154,61 @@ void AppGemini::handle_server_json(const char* data, size_t len)
 
         cJSON* tc = cJSON_GetObjectItem(sc, "turnComplete");
         if (tc && cJSON_IsTrue(tc)) {
-            _server_turn_done = true;
-            _new_turn_subtitle = true;
+            if (_mcp_wait_reply_mode.exchange(false)) {
+                _pcm_ring.clear();
+                _mcp_reply_ready = true;
+                set_state(SessionState::AgentWait);
+                set_subtitle("Reply sent to engineer...");
+            } else {
+                _server_turn_done  = true;
+                _new_turn_subtitle = true;
+            }
+        }
+    }
+
+    // Handle MCP toolCall (escalate_to_engineer / end_chat)
+    cJSON* tool_call = cJSON_GetObjectItem(root, "toolCall");
+    if (tool_call && cJSON_IsObject(tool_call)) {
+        cJSON* fcs = cJSON_GetObjectItem(tool_call, "functionCalls");
+        if (fcs && cJSON_IsArray(fcs)) {
+            cJSON* fc = nullptr;
+            cJSON_ArrayForEach(fc, fcs)
+            {
+                cJSON* jname = cJSON_GetObjectItem(fc, "name");
+                cJSON* jid   = cJSON_GetObjectItem(fc, "id");
+                if (!jname || !cJSON_IsString(jname) || !jname->valuestring) {
+                    continue;
+                }
+                std::string fn_name = jname->valuestring;
+                std::string fn_id   = (jid && cJSON_IsString(jid) && jid->valuestring) ? jid->valuestring : "";
+                if (fn_name == "escalate_to_engineer") {
+                    std::string task = "User requested technical assistance";
+                    cJSON* jargs     = cJSON_GetObjectItem(fc, "args");
+                    if (jargs && cJSON_IsObject(jargs)) {
+                        cJSON* jtask = cJSON_GetObjectItem(jargs, "task");
+                        if (jtask && cJSON_IsString(jtask) && jtask->valuestring && jtask->valuestring[0] != '\0') {
+                            task = jtask->valuestring;
+                        }
+                    }
+                    {
+                        std::lock_guard<std::mutex> lk(_mcp_mtx);
+                        _mcp_escalation_task   = task;
+                        _mcp_escalation_user   = _mcp_last_user_text;
+                        _mcp_handoff_call_id   = fn_id;
+                        _mcp_handoff_call_name = fn_name;
+                    }
+                    _mcp_handoff_pending = true;
+                    break;
+                } else if (fn_name == "end_chat") {
+                    {
+                        std::lock_guard<std::mutex> lk(_mcp_mtx);
+                        _mcp_handoff_call_id   = fn_id;
+                        _mcp_handoff_call_name = fn_name;
+                    }
+                    _mcp_end_pending = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -1064,6 +1296,10 @@ void AppGemini::process_mic_vad()
                 ESP_LOGI(TAG, "Voice detected (rms=%d, floor=%.0f, trig=%d)", rms, _noise_floor, trigger_rms);
                 _speech_start_ms = now;
                 _last_voice_ms   = now;
+                {
+                    std::lock_guard<std::mutex> lk(_mcp_mtx);
+                    _mcp_last_user_text.clear();
+                }
                 _ws->Send("{\"realtimeInput\":{\"activityStart\":{}}}");
 
                 // Flush pre-roll buffer in chronological order so first syllable is preserved
@@ -1107,6 +1343,69 @@ void AppGemini::net_task_loop()
     while (!_closing.load()) {
         if (_want_connect.exchange(false)) {
             connect_live_session();
+            continue;
+        }
+
+        if (_mcp_play_pending.exchange(false)) {
+            std::string url;
+            bool wait_after = false;
+            {
+                std::lock_guard<std::mutex> lk(_mcp_mtx);
+                url        = _mcp_next_play_url;
+                wait_after = _mcp_play_wait_reply.load();
+                _mcp_next_play_url.clear();
+            }
+            if (!url.empty()) {
+                if (codec && codec->input_enabled()) {
+                    codec->EnableInput(false);
+                }
+                play_http_wav(url, wait_after);
+            }
+            continue;
+        }
+
+        if (_mcp_handoff_pending.exchange(false)) {
+            std::string cid;
+            {
+                std::lock_guard<std::mutex> lk(_mcp_mtx);
+                cid = _mcp_handoff_call_id;
+            }
+            if (_ws && _ws->IsConnected()) {
+                if (!cid.empty()) {
+                    std::string tr = "{\"toolResponse\":{\"functionResponses\":[{\"id\":\"" + cid +
+                                     "\",\"name\":\"escalate_to_engineer\",\"response\":{\"status\":\"ok\"}}]}}";
+                    _ws->Send(tr);
+                }
+                _ws->Send(
+                    "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":"
+                    "\"Di exactamente esta frase corta en el idioma del usuario y nada mas: "
+                    "Paso la orden al ingeniero principal.\"}]}],\"turnComplete\":true}}");
+            }
+            _mcp_escalation_ready = true;
+            _mcp_agent_active     = true;
+            continue;
+        }
+
+        if (_mcp_end_pending.exchange(false)) {
+            std::string cid;
+            {
+                std::lock_guard<std::mutex> lk(_mcp_mtx);
+                cid = _mcp_handoff_call_id;
+            }
+            if (_ws && _ws->IsConnected()) {
+                if (!cid.empty()) {
+                    std::string tr = "{\"toolResponse\":{\"functionResponses\":[{\"id\":\"" + cid +
+                                     "\",\"name\":\"end_chat\",\"response\":{\"status\":\"ok\"}}]}}";
+                    _ws->Send(tr);
+                }
+                _ws->Send(
+                    "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":"
+                    "\"Di exactamente esta frase corta en el idioma del usuario y nada mas: "
+                    "Listo, cerramos el modo agente. Sigo disponible aqui.\"}]}],\"turnComplete\":true}}");
+            }
+            _mcp_attached       = false;
+            _mcp_agent_active   = false;
+            _mcp_lease_until_ms = 0;
             continue;
         }
 
@@ -1203,8 +1502,9 @@ void AppGemini::spk_task_loop()
     bool output_active = false;
 
     while (!_closing.load()) {
-        const int pitch_pct = std::clamp(_pitch_pct.load(), MIN_PITCH_PCT, MAX_PITCH_PCT);
-        const double ratio  = static_cast<double>(pitch_pct) / 100.0;
+        const bool is_mcp_wav = _mcp_playing_wav.load();
+        const int pitch_pct   = is_mcp_wav ? 100 : std::clamp(_pitch_pct.load(), MIN_PITCH_PCT, MAX_PITCH_PCT);
+        const double ratio    = static_cast<double>(pitch_pct) / 100.0;
         const size_t need   = (pitch_pct == 100) ? kOutSamples
                                                  : static_cast<size_t>(std::ceil(kOutSamples * ratio)) + 2;
 
@@ -1284,7 +1584,10 @@ void AppGemini::spk_task_loop()
                         static_cast<SessionState>(_state.load()) == SessionState::Speaking) {
                         // Brief echo guard before automatically re-arming hands-free mic
                         vTaskDelay(pdMS_TO_TICKS(ECHO_GUARD_MS));
-                        if (!_closing.load() && !_muted.load()) {
+                        if (_mcp_agent_active.load()) {
+                            set_state(SessionState::AgentWait);
+                            set_subtitle("Waiting for lead engineer...");
+                        } else if (!_closing.load() && !_muted.load()) {
                             _want_arm_listen = true;
                         } else if (!_closing.load()) {
                             set_state(SessionState::Ready);
@@ -1310,6 +1613,576 @@ void AppGemini::spk_task_loop()
     if (output_active && codec) {
         codec->EnableOutput(false);
     }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                        MCP HTTP Bridge & Motion                            */
+/* -------------------------------------------------------------------------- */
+
+bool AppGemini::start_httpd()
+{
+    if (_httpd) {
+        return true;
+    }
+    httpd_config_t cfg    = HTTPD_DEFAULT_CONFIG();
+    cfg.server_port       = 80;
+    cfg.stack_size        = 6144;
+    cfg.max_uri_handlers  = 16;
+    cfg.max_open_sockets  = 6;
+    cfg.lru_purge_enable  = true;
+    cfg.recv_wait_timeout = 8;
+    cfg.send_wait_timeout = 8;
+    cfg.task_priority     = 4;
+
+    httpd_handle_t srv = nullptr;
+    if (httpd_start(&srv, &cfg) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to start MCP HTTP server on :80");
+        return false;
+    }
+
+    const httpd_uri_t uris[] = {
+        {"/audio/status",    HTTP_GET,  handle_audio_status,    this},
+        {"/playback/status", HTTP_GET,  handle_playback_status, this},
+        {"/play",            HTTP_POST, handle_play,            this},
+        {"/mcp/attach",      HTTP_POST, handle_mcp_attach,      this},
+        {"/mcp/detach",      HTTP_POST, handle_mcp_detach,      this},
+        {"/mcp/escalation",  HTTP_GET,  handle_mcp_escalation,  this},
+        {"/mcp/wait_reply",  HTTP_POST, handle_mcp_wait_reply,  this},
+        {"/mcp/reply",       HTTP_GET,  handle_mcp_reply,       this},
+        {"/agent_mode",      HTTP_POST, handle_agent_mode,      this},
+        {"/listen/resume",   HTTP_POST, handle_listen_resume,   this},
+        {"/move",            HTTP_POST, handle_move,            this},
+        {"/nod",             HTTP_POST, handle_nod,             this},
+        {"/shake",           HTTP_POST, handle_shake,           this},
+        {"/home",            HTTP_POST, handle_home,            this},
+        {"/face",            HTTP_POST, handle_face,            this},
+    };
+    for (const auto& u : uris) {
+        httpd_register_uri_handler(srv, &u);
+    }
+
+    _httpd = srv;
+    ESP_LOGI(TAG, "Unified Gemini+MCP HTTP server ready on :80");
+    return true;
+}
+
+void AppGemini::stop_httpd()
+{
+    if (_httpd) {
+        httpd_stop(static_cast<httpd_handle_t>(_httpd));
+        _httpd = nullptr;
+    }
+    _httpd_ok = false;
+}
+
+void AppGemini::play_http_wav(const std::string& url, bool wait_reply_after)
+{
+    _mcp_play_abort      = false;
+    _mcp_playing_wav     = true;
+    _mcp_play_started_ms = GetHAL().millis();
+    _pcm_ring.clear();
+    _server_turn_done = false;
+    set_state(SessionState::Speaking);
+    set_subtitle("Lead engineer speaking...");
+
+    esp_http_client_config_t cfg = {};
+    cfg.url                      = url.c_str();
+    cfg.method                   = HTTP_METHOD_GET;
+    cfg.timeout_ms               = 8000;
+    cfg.buffer_size              = 4096;
+    cfg.buffer_size_tx           = 1024;
+    cfg.crt_bundle_attach        = esp_crt_bundle_attach;
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) {
+        _mcp_playing_wav = false;
+        return;
+    }
+    if (esp_http_client_open(client, 0) != ESP_OK) {
+        esp_http_client_cleanup(client);
+        _mcp_playing_wav = false;
+        return;
+    }
+
+    esp_http_client_fetch_headers(client);
+    int status = esp_http_client_get_status_code(client);
+    if (status != 200) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        _mcp_playing_wav = false;
+        return;
+    }
+
+    uint8_t riff[12];
+    uint32_t src_rate = 24000;
+    uint16_t channels = 1;
+    bool found_data   = false;
+    if (esp_http_client_read(client, reinterpret_cast<char*>(riff), 12) == 12 &&
+        std::memcmp(riff, "RIFF", 4) == 0 && std::memcmp(riff + 8, "WAVE", 4) == 0) {
+        for (int c = 0; c < 12 && !_closing.load() && !_mcp_play_abort.load(); ++c) {
+            uint8_t ch[8];
+            if (esp_http_client_read(client, reinterpret_cast<char*>(ch), 8) != 8) {
+                break;
+            }
+            uint32_t sz = rd_u32(ch + 4);
+            if (std::memcmp(ch, "fmt ", 4) == 0) {
+                uint8_t fmt[32] = {};
+                size_t to_rd    = std::min<size_t>(sz, sizeof(fmt));
+                if (esp_http_client_read(client, reinterpret_cast<char*>(fmt), static_cast<int>(to_rd)) >= 16) {
+                    channels = rd_u16(fmt + 2);
+                    src_rate = rd_u32(fmt + 4);
+                }
+                size_t skip = (sz > to_rd) ? (sz - to_rd) : 0;
+                uint8_t dump[64];
+                while (skip > 0) {
+                    int r = esp_http_client_read(client, reinterpret_cast<char*>(dump),
+                                                 static_cast<int>(std::min<size_t>(skip, sizeof(dump))));
+                    if (r <= 0) break;
+                    skip -= static_cast<size_t>(r);
+                }
+            } else if (std::memcmp(ch, "data", 4) == 0) {
+                found_data = true;
+                break;
+            } else {
+                size_t skip = sz + (sz & 1);
+                uint8_t dump[64];
+                while (skip > 0) {
+                    int r = esp_http_client_read(client, reinterpret_cast<char*>(dump),
+                                                 static_cast<int>(std::min<size_t>(skip, sizeof(dump))));
+                    if (r <= 0) break;
+                    skip -= static_cast<size_t>(r);
+                }
+            }
+        }
+    }
+
+    if (found_data && src_rate > 0 && channels >= 1) {
+        constexpr size_t RAW_BYTES = 2048;
+        uint8_t* raw = static_cast<uint8_t*>(heap_caps_malloc(RAW_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        std::vector<int16_t> out24k;
+        out24k.reserve(1024);
+        size_t leftover = 0;
+
+        while (raw && !_closing.load() && !_mcp_play_abort.load()) {
+            int r = esp_http_client_read(client, reinterpret_cast<char*>(raw + leftover),
+                                         static_cast<int>(RAW_BYTES - leftover));
+            if (r <= 0) {
+                break;
+            }
+            size_t total       = leftover + static_cast<size_t>(r);
+            size_t frame_bytes = static_cast<size_t>(channels) * 2;
+            size_t frames      = total / frame_bytes;
+            size_t used        = frames * frame_bytes;
+            leftover           = total - used;
+            if (frames > 0) {
+                const int16_t* src = reinterpret_cast<const int16_t*>(raw);
+                if (src_rate == 24000 && channels == 1) {
+                    size_t pushed = 0;
+                    while (pushed < frames && !_closing.load() && !_mcp_play_abort.load()) {
+                        pushed += _pcm_ring.push(src + pushed, frames - pushed);
+                        if (pushed < frames) vTaskDelay(pdMS_TO_TICKS(10));
+                    }
+                } else {
+                    int out_n = static_cast<int>((static_cast<uint64_t>(frames) * 24000ULL) / src_rate);
+                    out24k.resize(std::max<int>(1, out_n));
+                    for (int i = 0; i < out_n; ++i) {
+                        uint64_t fp = (static_cast<uint64_t>(i) * src_rate << 12) / 24000ULL;
+                        int idx0    = std::min<int>(static_cast<int>(fp >> 12), static_cast<int>(frames - 1));
+                        int idx1    = std::min<int>(idx0 + 1, static_cast<int>(frames - 1));
+                        int frac    = static_cast<int>(fp & 0xFFF);
+                        int32_t s0  = (channels >= 2) ? ((int32_t)src[idx0 * channels] + src[idx0 * channels + 1]) / 2
+                                                      : src[idx0];
+                        int32_t s1  = (channels >= 2) ? ((int32_t)src[idx1 * channels] + src[idx1 * channels + 1]) / 2
+                                                      : src[idx1];
+                        out24k[i]   = static_cast<int16_t>(s0 + (((s1 - s0) * frac) >> 12));
+                    }
+                    size_t pushed = 0;
+                    while (pushed < out24k.size() && !_closing.load() && !_mcp_play_abort.load()) {
+                        pushed += _pcm_ring.push(out24k.data() + pushed, out24k.size() - pushed);
+                        if (pushed < out24k.size()) vTaskDelay(pdMS_TO_TICKS(10));
+                    }
+                }
+            }
+            if (leftover > 0) {
+                std::memmove(raw, raw + used, leftover);
+            }
+        }
+        if (raw) {
+            heap_caps_free(raw);
+        }
+    }
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    // Wait for speaker ring buffer to drain cleanly
+    _server_turn_done = true;
+    uint32_t t0       = GetHAL().millis();
+    while (!_closing.load() && !_mcp_play_abort.load() && _pcm_ring.available() > 0 &&
+           (GetHAL().millis() - t0 < 25000)) {
+        vTaskDelay(pdMS_TO_TICKS(25));
+    }
+    vTaskDelay(pdMS_TO_TICKS(120));
+    _mcp_playing_wav = false;
+
+    if (wait_reply_after && !_closing.load()) {
+        {
+            std::lock_guard<std::mutex> lk(_mcp_mtx);
+            _mcp_reply_text.clear();
+        }
+        _mcp_reply_ready     = false;
+        _mcp_wait_reply_mode = true;
+        _want_arm_listen     = true;
+    }
+}
+
+void AppGemini::process_motion_cmds()
+{
+    std::deque<MotionCmd> q;
+    {
+        std::lock_guard<std::mutex> lk(_motion_mtx);
+        if (_motion_cmds.empty()) {
+            return;
+        }
+        q.swap(_motion_cmds);
+    }
+    uint32_t now = GetHAL().millis();
+    auto& motion = GetStackChan().motion();
+    for (const auto& cmd : q) {
+        if (cmd.kind == "move") {
+            _gesture_type = 0;
+            motion.moveWithSpeed(deg_to_yaw(cmd.x_deg), deg_to_pitch(cmd.y_deg), std::clamp(cmd.speed, 100, 1000));
+        } else if (cmd.kind == "home") {
+            _gesture_type = 0;
+            motion.moveWithSpeed(deg_to_yaw(0), deg_to_pitch(Y_HOME_DEG), 500);
+        } else if (cmd.kind == "nod") {
+            _gesture_type = 1;
+            _gesture_step = 0;
+            _gesture_next = now;
+        } else if (cmd.kind == "shake") {
+            _gesture_type = 2;
+            _gesture_step = 0;
+            _gesture_next = now;
+        }
+    }
+}
+
+void AppGemini::run_gesture_step(uint32_t now)
+{
+    if (_gesture_type == 0 || static_cast<int32_t>(now - _gesture_next) < 0) {
+        return;
+    }
+    auto& motion = GetStackChan().motion();
+    if (_gesture_type == 1) {
+        static const int nod_y[4] = {30, 58, 34, Y_HOME_DEG};
+        motion.moveWithSpeed(deg_to_yaw(0), deg_to_pitch(nod_y[_gesture_step]), 700);
+        _gesture_next = now + 260;
+        if (++_gesture_step >= 4) _gesture_type = 0;
+    } else if (_gesture_type == 2) {
+        static const int shake_x[4] = {-22, 22, -16, 0};
+        motion.moveWithSpeed(deg_to_yaw(shake_x[_gesture_step]), deg_to_pitch(Y_HOME_DEG), 700);
+        _gesture_next = now + 260;
+        if (++_gesture_step >= 4) _gesture_type = 0;
+    }
+}
+
+int AppGemini::handle_audio_status(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    std::string ip;
+    {
+        std::lock_guard<std::mutex> lk(self->_mcp_mtx);
+        ip = self->_ip_str;
+    }
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ready", false);
+    cJSON_AddBoolToObject(root, "recording", static_cast<SessionState>(self->_state.load()) == SessionState::Hearing);
+    cJSON_AddStringToObject(root, "mode", "gemini_mcp");
+    cJSON_AddBoolToObject(root, "mcp_attached", self->_mcp_attached.load());
+    const char* am = !self->_mcp_attached.load()     ? "standalone"
+                     : self->_mcp_agent_active.load() ? "engineer"
+                                                      : "live";
+    cJSON_AddStringToObject(root, "agent_mode", am);
+    cJSON_AddStringToObject(root, "voice", self->_voice_name.c_str());
+    cJSON_AddStringToObject(root, "ip", ip.c_str());
+    cJSON_AddBoolToObject(root, "escalation_ready", self->_mcp_escalation_ready.load());
+    cJSON_AddBoolToObject(root, "reply_ready", self->_mcp_reply_ready.load());
+    char* s = cJSON_PrintUnformatted(root);
+    send_http_json(req, s ? s : "{}");
+    if (s) cJSON_free(s);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+int AppGemini::handle_playback_status(httpd_req* req)
+{
+    auto* self  = static_cast<AppGemini*>(req->user_ctx);
+    bool play   = self->_mcp_playing_wav.load() ||
+                  (static_cast<SessionState>(self->_state.load()) == SessionState::Speaking);
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "playing", play);
+    cJSON_AddNumberToObject(root, "started_ms", static_cast<double>(self->_mcp_play_started_ms.load()));
+    cJSON_AddStringToObject(root, "kind", "wav");
+    char* s = cJSON_PrintUnformatted(root);
+    send_http_json(req, s ? s : "{}");
+    if (s) cJSON_free(s);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+int AppGemini::handle_play(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    std::string body;
+    if (!read_http_body(req, body, 1024)) {
+        send_http_json(req, "{\"success\":false,\"error\":\"Invalid body\"}", "400 Bad Request");
+        return ESP_OK;
+    }
+    cJSON* root = cJSON_Parse(body.c_str());
+    if (!root) {
+        send_http_json(req, "{\"success\":false,\"error\":\"Invalid JSON\"}", "400 Bad Request");
+        return ESP_OK;
+    }
+    cJSON* jurl = cJSON_GetObjectItem(root, "voice_url");
+    if (!cJSON_IsString(jurl) || !jurl->valuestring || jurl->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        send_http_json(req, "{\"success\":false,\"error\":\"Missing voice_url\"}", "400 Bad Request");
+        return ESP_OK;
+    }
+    bool wait_reply = cJSON_IsTrue(cJSON_GetObjectItem(root, "wait_reply"));
+    {
+        std::lock_guard<std::mutex> lk(self->_mcp_mtx);
+        self->_mcp_next_play_url = jurl->valuestring;
+    }
+    self->_mcp_play_wait_reply = wait_reply;
+    cJSON_Delete(root);
+    self->_mcp_play_abort   = true;
+    self->_mcp_play_pending = true;
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_mcp_attach(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    uint32_t ttl_ms   = 25000;
+    std::string mode;
+    std::string ctx;
+    bool has_ctx = false;
+
+    std::string body;
+    if (read_http_body(req, body, 1024)) {
+        cJSON* root = cJSON_Parse(body.c_str());
+        if (root) {
+            if (auto* jt = cJSON_GetObjectItem(root, "ttl_ms"); cJSON_IsNumber(jt)) {
+                ttl_ms = static_cast<uint32_t>(std::clamp<int>(static_cast<int>(jt->valuedouble), 5000, 120000));
+            }
+            if (auto* jm = cJSON_GetObjectItem(root, "mode"); cJSON_IsString(jm) && jm->valuestring) {
+                mode = jm->valuestring;
+            }
+            if (auto* jc = cJSON_GetObjectItem(root, "context"); cJSON_IsString(jc) && jc->valuestring) {
+                ctx     = jc->valuestring;
+                has_ctx = true;
+            }
+            cJSON_Delete(root);
+        }
+    }
+
+    bool was_attached = self->_mcp_attached.exchange(true);
+    self->_mcp_lease_until_ms = GetHAL().millis() + ttl_ms;
+    bool need_reconnect       = !was_attached;
+
+    if (has_ctx) {
+        std::lock_guard<std::mutex> lk(self->_mcp_mtx);
+        if (self->_mcp_context != ctx) {
+            self->_mcp_context = ctx;
+            need_reconnect     = true;
+        }
+    }
+    if (mode == "engineer") {
+        self->_mcp_agent_active = true;
+        self->set_state(SessionState::AgentWait);
+    } else if (mode == "live") {
+        bool was_agent = self->_mcp_agent_active.exchange(false);
+        self->_mcp_escalation_ready = false;
+        self->_mcp_wait_reply_mode  = false;
+        if (was_agent && !need_reconnect) {
+            self->_want_arm_listen = true;
+        }
+    }
+    if (need_reconnect) {
+        self->_want_connect = true;
+    }
+
+    send_http_json(req, "{\"success\":true,\"attached\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_mcp_detach(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    bool was   = self->_mcp_attached.exchange(false);
+    self->_mcp_agent_active     = false;
+    self->_mcp_wait_reply_mode  = false;
+    self->_mcp_escalation_ready = false;
+    self->_mcp_reply_ready      = false;
+    self->_mcp_lease_until_ms   = 0;
+    if (was) {
+        self->_want_connect = true;
+    }
+    send_http_json(req, "{\"success\":true,\"attached\":false}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_mcp_escalation(httpd_req* req)
+{
+    auto* self  = static_cast<AppGemini*>(req->user_ctx);
+    cJSON* root = cJSON_CreateObject();
+    if (self->_mcp_escalation_ready.exchange(false)) {
+        std::string task, user;
+        {
+            std::lock_guard<std::mutex> lk(self->_mcp_mtx);
+            task = self->_mcp_escalation_task;
+            user = self->_mcp_escalation_user;
+            self->_mcp_escalation_task.clear();
+            self->_mcp_escalation_user.clear();
+        }
+        cJSON_AddBoolToObject(root, "ready", true);
+        cJSON_AddStringToObject(root, "task", task.c_str());
+        cJSON_AddStringToObject(root, "user_text", user.c_str());
+    } else {
+        cJSON_AddBoolToObject(root, "ready", false);
+    }
+    char* s = cJSON_PrintUnformatted(root);
+    send_http_json(req, s ? s : "{}");
+    if (s) cJSON_free(s);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+int AppGemini::handle_mcp_wait_reply(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    {
+        std::lock_guard<std::mutex> lk(self->_mcp_mtx);
+        self->_mcp_reply_text.clear();
+    }
+    self->_mcp_reply_ready     = false;
+    self->_mcp_wait_reply_mode = true;
+    self->_mcp_agent_active    = true;
+    self->_want_arm_listen     = true;
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_mcp_reply(httpd_req* req)
+{
+    auto* self  = static_cast<AppGemini*>(req->user_ctx);
+    cJSON* root = cJSON_CreateObject();
+    if (self->_mcp_reply_ready.exchange(false)) {
+        std::string txt;
+        {
+            std::lock_guard<std::mutex> lk(self->_mcp_mtx);
+            txt = self->_mcp_reply_text;
+            self->_mcp_reply_text.clear();
+        }
+        cJSON_AddBoolToObject(root, "ready", true);
+        cJSON_AddStringToObject(root, "text", txt.c_str());
+    } else {
+        cJSON_AddBoolToObject(root, "ready", false);
+    }
+    char* s = cJSON_PrintUnformatted(root);
+    send_http_json(req, s ? s : "{}");
+    if (s) cJSON_free(s);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+int AppGemini::handle_agent_mode(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    std::string body;
+    if (read_http_body(req, body, 512)) {
+        cJSON* root = cJSON_Parse(body.c_str());
+        if (root) {
+            cJSON* jm = cJSON_GetObjectItem(root, "mode");
+            std::string m = (cJSON_IsString(jm) && jm->valuestring) ? jm->valuestring : "";
+            cJSON_Delete(root);
+            if (m == "engineer" || m == "agent") {
+                self->_mcp_agent_active = true;
+                self->set_state(SessionState::AgentWait);
+            } else if (m == "live" || m == "free") {
+                self->_mcp_agent_active = false;
+                self->_want_arm_listen  = true;
+            }
+        }
+    }
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_listen_resume(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    self->_mcp_agent_active    = false;
+    self->_mcp_wait_reply_mode = false;
+    self->_want_arm_listen     = true;
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_move(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    std::string body;
+    if (read_http_body(req, body, 512)) {
+        cJSON* root = cJSON_Parse(body.c_str());
+        if (root) {
+            MotionCmd cmd;
+            cmd.kind = "move";
+            if (auto* jx = cJSON_GetObjectItem(root, "x"); cJSON_IsNumber(jx)) cmd.x_deg = static_cast<int>(jx->valuedouble);
+            if (auto* jy = cJSON_GetObjectItem(root, "y"); cJSON_IsNumber(jy)) cmd.y_deg = static_cast<int>(jy->valuedouble);
+            if (auto* js = cJSON_GetObjectItem(root, "speed"); cJSON_IsNumber(js)) cmd.speed = static_cast<int>(js->valuedouble) * 10;
+            cJSON_Delete(root);
+            std::lock_guard<std::mutex> lk(self->_motion_mtx);
+            self->_motion_cmds.push_back(cmd);
+        }
+    }
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_nod(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    std::lock_guard<std::mutex> lk(self->_motion_mtx);
+    self->_motion_cmds.push_back({"nod", 0, Y_HOME_DEG, 700});
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_shake(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    std::lock_guard<std::mutex> lk(self->_motion_mtx);
+    self->_motion_cmds.push_back({"shake", 0, Y_HOME_DEG, 700});
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_home(httpd_req* req)
+{
+    auto* self = static_cast<AppGemini*>(req->user_ctx);
+    std::lock_guard<std::mutex> lk(self->_motion_mtx);
+    self->_motion_cmds.push_back({"home", 0, Y_HOME_DEG, 500});
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
+int AppGemini::handle_face(httpd_req* req)
+{
+    send_http_json(req, "{\"success\":true}");
+    return ESP_OK;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1345,6 +2218,11 @@ void AppGemini::on_primary_button()
             // Instant barge-in: stop playback & re-arm listening immediately
             _muted           = false;
             _want_arm_listen = true;
+            break;
+        case SessionState::AgentWait:
+            // Allow user to tap to cancel waiting and return to Live listening
+            _mcp_agent_active = false;
+            _want_arm_listen  = true;
             break;
         case SessionState::ConnectingWifi:
         case SessionState::ConnectingApi:
@@ -1492,6 +2370,7 @@ void AppGemini::update_leds(SessionState st, int rms)
             break;
         }
         case SessionState::Thinking:
+        case SessionState::AgentWait:
         case SessionState::ConnectingWifi:
         case SessionState::ConnectingApi: {
             float p = 0.5f + 0.5f * std::sin(static_cast<float>(now % 1200) / 1200.0f * 6.28318f);
@@ -1605,6 +2484,72 @@ void AppGemini::build_ui()
     lv_obj_align(_face_mouth, LV_ALIGN_CENTER, 0, 18);
     style_flat_box(_face_mouth, COL_WHITE, 4);
     lv_obj_remove_flag(_face_mouth, LV_OBJ_FLAG_CLICKABLE);
+
+    // Dual-avatar MCP stage (hidden in standalone mode; shown automatically while _mcp_attached == true)
+    _dual_stage = lv_obj_create(_stage_cont);
+    lv_obj_set_pos(_dual_stage, 0, 0);
+    lv_obj_set_size(_dual_stage, 304, stage_h);
+    style_flat_box(_dual_stage, COL_CARD, 12);
+    lv_obj_set_style_border_width(_dual_stage, 1, 0);
+    lv_obj_set_style_border_color(_dual_stage, lv_color_hex(COL_CARD_HI), 0);
+    lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
+
+    const int slot_w        = 140;
+    const int slot_h        = std::max<int>(64, stage_h - 8);
+    const int slot_x[2]     = {6, 158};
+    const char* slot_txt[2] = {"LIVE", "AGENT $"};
+    for (int i = 0; i < 2; ++i) {
+        _slot_card[i] = lv_obj_create(_dual_stage);
+        lv_obj_set_pos(_slot_card[i], slot_x[i], 4);
+        lv_obj_set_size(_slot_card[i], slot_w, slot_h);
+        style_flat_box(_slot_card[i], 0x0F172A, 10);
+        lv_obj_set_style_border_width(_slot_card[i], 1, 0);
+        lv_obj_set_style_border_color(_slot_card[i], lv_color_hex(0x24314F), 0);
+        lv_obj_remove_flag(_slot_card[i], LV_OBJ_FLAG_CLICKABLE);
+
+        _slot_dot[i] = lv_obj_create(_slot_card[i]);
+        lv_obj_set_size(_slot_dot[i], 7, 7);
+        lv_obj_set_pos(_slot_dot[i], 8, 7);
+        style_flat_box(_slot_dot[i], 0x64748B, LV_RADIUS_CIRCLE);
+        lv_obj_remove_flag(_slot_dot[i], LV_OBJ_FLAG_CLICKABLE);
+
+        _slot_lbl[i] = lv_label_create(_slot_card[i]);
+        lv_obj_set_pos(_slot_lbl[i], 19, 4);
+        lv_obj_set_style_text_font(_slot_lbl[i], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(0x94A3B8), 0);
+        lv_label_set_text(_slot_lbl[i], slot_txt[i]);
+
+        _dual_img[i] = lv_image_create(_slot_card[i]);
+        if (_img_naruto_calm.data != nullptr) {
+            lv_image_set_src(_dual_img[i], &_img_naruto_calm);
+            lv_image_set_scale(_dual_img[i], is_fix ? 84 : 96);
+        }
+        lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 8);
+        lv_obj_remove_flag(_dual_img[i], LV_OBJ_FLAG_CLICKABLE);
+
+        _dual_face[i] = lv_obj_create(_slot_card[i]);
+        lv_obj_set_size(_dual_face[i], 88, is_fix ? 46 : 54);
+        lv_obj_align(_dual_face[i], LV_ALIGN_CENTER, 0, 9);
+        style_flat_box(_dual_face[i], COL_BG, 10);
+        lv_obj_set_style_border_width(_dual_face[i], 2, 0);
+        lv_obj_set_style_border_color(_dual_face[i], lv_color_hex(0x24314F), 0);
+        lv_obj_remove_flag(_dual_face[i], LV_OBJ_FLAG_CLICKABLE);
+
+        _dual_eye_l[i] = lv_obj_create(_dual_face[i]);
+        lv_obj_set_size(_dual_eye_l[i], 12, 12);
+        lv_obj_align(_dual_eye_l[i], LV_ALIGN_CENTER, -18, -5);
+        style_flat_box(_dual_eye_l[i], COL_WHITE, LV_RADIUS_CIRCLE);
+
+        _dual_eye_r[i] = lv_obj_create(_dual_face[i]);
+        lv_obj_set_size(_dual_eye_r[i], 12, 12);
+        lv_obj_align(_dual_eye_r[i], LV_ALIGN_CENTER, 18, -5);
+        style_flat_box(_dual_eye_r[i], COL_WHITE, LV_RADIUS_CIRCLE);
+
+        _dual_mouth[i] = lv_obj_create(_dual_face[i]);
+        lv_obj_set_size(_dual_mouth[i], 24, 5);
+        lv_obj_align(_dual_mouth[i], LV_ALIGN_CENTER, 0, 12);
+        style_flat_box(_dual_mouth[i], COL_WHITE, 3);
+    }
 
     // Setup card shown only when no API key is configured
     _setup_card = lv_obj_create(_stage_cont);
@@ -1810,6 +2755,17 @@ void AppGemini::destroy_ui()
         _face_eye_l     = nullptr;
         _face_eye_r     = nullptr;
         _face_mouth     = nullptr;
+        _dual_stage     = nullptr;
+        for (int i = 0; i < 2; ++i) {
+            _slot_card[i]  = nullptr;
+            _slot_dot[i]   = nullptr;
+            _slot_lbl[i]   = nullptr;
+            _dual_img[i]   = nullptr;
+            _dual_face[i]  = nullptr;
+            _dual_eye_l[i] = nullptr;
+            _dual_eye_r[i] = nullptr;
+            _dual_mouth[i] = nullptr;
+        }
         _setup_card     = nullptr;
         _lbl_setup_body = nullptr;
         _sub_box        = nullptr;
@@ -1838,21 +2794,59 @@ void AppGemini::refresh_ui(uint32_t now)
     _volume = std::clamp(static_cast<int>(GetHAL().getSpeakerVolume()), 0, 100);
     lv_label_set_text(_lbl_vol_batt, _voice_name.c_str());
 
-    // State-dependent badge, primary button, and setup card
-    if (_last_rendered_state != static_cast<int>(st)) {
-        _last_rendered_state = static_cast<int>(st);
+    const bool mcp_on   = _mcp_attached.load();
+    const bool agent_on = _mcp_agent_active.load();
 
-        bool need_key    = (st == SessionState::NeedKey);
-        bool use_naruto  = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-                            _img_naruto_calm.data != nullptr);
+    // State-dependent badge, primary button, setup card, and 1-avatar vs 2-avatar stage
+    if (_last_rendered_state != static_cast<int>(st) || _last_rendered_mcp != mcp_on ||
+        _last_rendered_agent != agent_on) {
+        _last_rendered_state = static_cast<int>(st);
+        _last_rendered_mcp   = mcp_on;
+        _last_rendered_agent = agent_on;
+
+        bool need_key   = (st == SessionState::NeedKey);
+        bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
+                           _img_naruto_calm.data != nullptr);
         if (need_key) {
             lv_obj_remove_flag(_setup_card, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
-            if (_avatar_img) {
-                lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+            if (_avatar_img) lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+            if (_dual_stage) lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
+        } else if (mcp_on && _dual_stage) {
+            lv_obj_add_flag(_setup_card, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
+            if (_avatar_img) lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
+
+            const bool left_on    = !agent_on;
+            const uint32_t bg[2]  = {left_on ? 0x0E2235U : 0x0F172AU, agent_on ? 0x2A1E10U : 0x0F172AU};
+            const uint32_t brd[2] = {left_on ? 0x38BDF8U : 0x24314FU, agent_on ? 0xFBBF24U : 0x24314FU};
+            const uint32_t txt[2] = {left_on ? 0x38BDF8U : 0x64748BU, agent_on ? 0xFBBF24U : 0x64748BU};
+            const int bw[2]       = {left_on ? 2 : 1, agent_on ? 2 : 1};
+            const lv_opa_t opa[2] = {left_on ? LV_OPA_COVER : LV_OPA_40, agent_on ? LV_OPA_COVER : LV_OPA_40};
+            std::string left_lbl  = "LIVE " + _voice_name;
+            if (left_lbl.size() > 14) left_lbl.resize(14);
+            lv_label_set_text(_slot_lbl[0], left_lbl.c_str());
+            for (int i = 0; i < 2; ++i) {
+                lv_obj_set_style_bg_color(_slot_card[i], lv_color_hex(bg[i]), 0);
+                lv_obj_set_style_border_color(_slot_card[i], lv_color_hex(brd[i]), 0);
+                lv_obj_set_style_border_width(_slot_card[i], bw[i], 0);
+                lv_obj_set_style_opa(_slot_card[i], opa[i], 0);
+                lv_obj_set_style_bg_color(_slot_dot[i], lv_color_hex(txt[i]), 0);
+                lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(txt[i]), 0);
+                if (use_naruto && _dual_img[i]) {
+                    lv_obj_remove_flag(_dual_img[i], LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_add_flag(_dual_face[i], LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    if (_dual_img[i]) lv_obj_add_flag(_dual_img[i], LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_remove_flag(_dual_face[i], LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_set_style_border_color(_dual_face[i], lv_color_hex(brd[i]), 0);
+                }
             }
+            lv_obj_set_style_border_color(_dual_stage, lv_color_hex(agent_on ? 0xB45309U : 0x0284C7U), 0);
         } else {
             lv_obj_add_flag(_setup_card, LV_OBJ_FLAG_HIDDEN);
+            if (_dual_stage) lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
             if (use_naruto && _avatar_img) {
                 lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
@@ -1913,10 +2907,16 @@ void AppGemini::refresh_ui(uint32_t now)
                 btn_col   = COL_AMBER;
                 break;
             case SessionState::Speaking:
-                badge_txt = "GEMINI  SPEAKING";
-                badge_col = COL_GEMINI_PURP;
+                badge_txt = mcp_on ? (agent_on ? "AGENT $  SPEAKING" : "LIVE + MCP  SPEAKING") : "GEMINI  SPEAKING";
+                badge_col = mcp_on ? (agent_on ? COL_AMBER : COL_CYAN) : COL_GEMINI_PURP;
                 btn_txt   = LV_SYMBOL_STOP " STOP";
-                btn_col   = COL_GEMINI_PURP;
+                btn_col   = mcp_on ? (agent_on ? COL_AMBER : COL_CYAN) : COL_GEMINI_PURP;
+                break;
+            case SessionState::AgentWait:
+                badge_txt = "AGENT $  WORKING";
+                badge_col = COL_AMBER;
+                btn_txt   = LV_SYMBOL_REFRESH " WAITING";
+                btn_col   = COL_AMBER;
                 break;
             case SessionState::Error:
                 badge_txt = "GEMINI  ERROR";
@@ -1952,6 +2952,30 @@ void AppGemini::refresh_face_anim(uint32_t now, SessionState st)
 {
     bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
                        _img_naruto_calm.data != nullptr);
+
+    if (_mcp_attached.load() && _dual_stage) {
+        const int active = _mcp_agent_active.load() ? 1 : 0;
+        const bool spk   = (st == SessionState::Speaking);
+        const int rms    = _audio_rms.load();
+        for (int i = 0; i < 2; ++i) {
+            const bool is_act = (i == active);
+            if (use_naruto && _dual_img[i]) {
+                bool happy = (is_act && spk && rms > 500 && ((now / 180) % 2 == 0));
+                lv_image_set_src(_dual_img[i], (happy && _img_naruto_happy.data) ? &_img_naruto_happy : &_img_naruto_calm);
+                int dy = (is_act && spk) ? -std::clamp(rms / 400, 0, 4) : 0;
+                lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 8 + dy);
+            } else if (_dual_face[i]) {
+                bool blink = is_act && ((now % 3800) > 3650);
+                lv_obj_set_size(_dual_eye_l[i], 12, blink ? 3 : 12);
+                lv_obj_set_size(_dual_eye_r[i], 12, blink ? 3 : 12);
+                int mh = (is_act && spk) ? (5 + std::clamp(rms / 240, 0, 12)) : 5;
+                lv_obj_set_size(_dual_mouth[i], 24, mh);
+                lv_obj_set_style_radius(_dual_mouth[i], (mh > 9) ? 6 : 3, 0);
+            }
+        }
+        return;
+    }
+
     if (use_naruto && _avatar_img) {
         bool want_happy = (st == SessionState::Speaking);
         if (want_happy != _avatar_showing_happy) {
