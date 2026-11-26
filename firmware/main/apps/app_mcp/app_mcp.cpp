@@ -1188,6 +1188,7 @@ int AppMcp::handle_audio_status(httpd_req* req)
     cJSON_AddStringToObject(root, "mode", "mcp");
     const int amode       = self->_agent_mode.load();
     const char* amode_str = (amode == static_cast<int>(AgentMode::Free))       ? "free"
+                            : (amode == static_cast<int>(AgentMode::Live))     ? "live"
                             : (amode == static_cast<int>(AgentMode::Engineer)) ? "engineer"
                                                                                : "idle";
     cJSON_AddStringToObject(root, "agent_mode", amode_str);
@@ -1500,16 +1501,32 @@ int AppMcp::handle_agent_mode(httpd_req* req)
         send_json(req, "{\"success\":false,\"error\":\"Invalid JSON\"}", "400 Bad Request");
         return ESP_OK;
     }
-    cJSON* jmode = cJSON_GetObjectItem(root, "mode");
+    cJSON* jmode  = cJSON_GetObjectItem(root, "mode");
+    cJSON* jlabel = cJSON_GetObjectItem(root, "label");
     std::string m = (cJSON_IsString(jmode) && jmode->valuestring) ? jmode->valuestring : "";
+    std::string lbl = (cJSON_IsString(jlabel) && jlabel->valuestring) ? jlabel->valuestring : "";
     cJSON_Delete(root);
 
-    if (m == "free" || m == "flash" || m == "casual") {
+    if (lbl.size() > 16) {
+        lbl.resize(16);
+    }
+
+    if (m == "live" || (m == "free" && lbl.rfind("LIVE", 0) == 0)) {
+        self->_agent_mode = static_cast<int>(AgentMode::Live);
+        std::lock_guard<std::mutex> lk(self->_status_mtx);
+        self->_free_slot_lbl = lbl.empty() ? "LIVE 3.8" : lbl;
+    } else if (m == "free" || m == "flash" || m == "casual") {
         self->_agent_mode = static_cast<int>(AgentMode::Free);
+        std::lock_guard<std::mutex> lk(self->_status_mtx);
+        self->_free_slot_lbl = lbl.empty() ? "FREE" : lbl;
     } else if (m == "engineer" || m == "agent" || m == "ide" || m == "antigravity") {
         self->_agent_mode = static_cast<int>(AgentMode::Engineer);
     } else {
         self->_agent_mode = static_cast<int>(AgentMode::Idle);
+        {
+            std::lock_guard<std::mutex> lk(self->_status_mtx);
+            self->_free_slot_lbl = "FREE";
+        }
         if (!self->_playing.load() && !self->_play_pending.load() && !self->_rec_speaking.load()) {
             self->set_status_text("Waiting for /stackchanchat...");
             GetHAL().showRgbColor(0, 18, 22);
@@ -1933,10 +1950,12 @@ void AppMcp::refresh_ui(uint32_t now)
 
     std::string ip;
     std::string st;
+    std::string free_lbl;
     {
         std::lock_guard<std::mutex> lk(_status_mtx);
-        ip = _ip_str;
-        st = _status_text;
+        ip       = _ip_str;
+        st       = _status_text;
+        free_lbl = _free_slot_lbl;
     }
 
     if (_httpd_ok.load() && !ip.empty()) {
@@ -1954,14 +1973,25 @@ void AppMcp::refresh_ui(uint32_t now)
     if (_slot_card[0] && _slot_card[1] && _stage) {
         const auto amode      = static_cast<AgentMode>(_agent_mode.load());
         const bool free_on    = (amode == AgentMode::Free);
+        const bool live_on    = (amode == AgentMode::Live);
+        const bool left_on    = (free_on || live_on);
         const bool agent_on   = (amode == AgentMode::Engineer);
-        const uint32_t bg[2]  = {free_on ? 0x112624U : 0x0F172AU, agent_on ? 0x2A1E10U : 0x0F172AU};
-        const uint32_t brd[2] = {free_on ? 0x34D399U : 0x24314FU, agent_on ? 0xFBBF24U : 0x24314FU};
-        const uint32_t txt[2] = {free_on ? 0x34D399U : 0x64748BU, agent_on ? 0xFBBF24U : 0x64748BU};
-        const int bw[2]       = {free_on ? 2 : 1, agent_on ? 2 : 1};
+        const uint32_t bg[2]  = {
+            live_on ? 0x0E2235U : (free_on ? 0x112624U : 0x0F172AU),
+            agent_on ? 0x2A1E10U : 0x0F172AU,
+        };
+        const uint32_t brd[2] = {
+            live_on ? 0x38BDF8U : (free_on ? 0x34D399U : 0x24314FU),
+            agent_on ? 0xFBBF24U : 0x24314FU,
+        };
+        const uint32_t txt[2] = {
+            live_on ? 0x38BDF8U : (free_on ? 0x34D399U : 0x64748BU),
+            agent_on ? 0xFBBF24U : 0x64748BU,
+        };
+        const int bw[2]       = {left_on ? 2 : 1, agent_on ? 2 : 1};
         const lv_opa_t opa[2] = {
-            free_on ? LV_OPA_COVER : (agent_on ? LV_OPA_40 : LV_OPA_50),
-            agent_on ? LV_OPA_COVER : (free_on ? LV_OPA_40 : LV_OPA_50),
+            left_on ? LV_OPA_COVER : (agent_on ? LV_OPA_40 : LV_OPA_50),
+            agent_on ? LV_OPA_COVER : (left_on ? LV_OPA_40 : LV_OPA_50),
         };
         for (int i = 0; i < 2; ++i) {
             lv_obj_set_style_bg_color(_slot_card[i], lv_color_hex(bg[i]), 0);
@@ -1974,8 +2004,9 @@ void AppMcp::refresh_ui(uint32_t now)
                 lv_obj_set_style_border_color(_face_card[i], lv_color_hex(brd[i]), 0);
             }
         }
+        lv_label_set_text(_slot_lbl[0], free_lbl.c_str());
         lv_obj_set_style_border_color(
-            _stage, lv_color_hex(free_on ? 0x1F6E58U : (agent_on ? 0xB45309U : COL_CARD_HI)), 0);
+            _stage, lv_color_hex(live_on ? 0x0284C7U : (free_on ? 0x1F6E58U : (agent_on ? 0xB45309U : COL_CARD_HI))), 0);
     }
 
     if (_btn_auto && _lbl_auto) {
@@ -2033,7 +2064,8 @@ void AppMcp::refresh_avatar_anim(uint32_t now)
     bool speaking    = _playing.load();
     int face_idx     = std::clamp(_face.load(), 0, static_cast<int>(FaceExpr::Count) - 1);
     const auto amode = static_cast<AgentMode>(_agent_mode.load());
-    const int active = (amode == AgentMode::Free) ? 0 : (amode == AgentMode::Engineer ? 1 : -1);
+    const int active = (amode == AgentMode::Free || amode == AgentMode::Live) ? 0
+                       : (amode == AgentMode::Engineer ? 1 : -1);
 
     for (int i = 0; i < 2; ++i) {
         const bool is_active = (i == active);

@@ -50,6 +50,7 @@ private:
         Idle = 0,
         Free,
         Engineer,
+        Live,
     };
 
     struct MotionCmd {
@@ -165,7 +166,8 @@ private:
 
     mutable std::mutex _status_mtx;
     std::string _ip_str;
-    std::string _status_text = "Starting Wi-Fi...";
+    std::string _status_text    = "Starting Wi-Fi...";
+    std::string _free_slot_lbl  = "FREE";
 
     uint32_t _last_ui_tick   = 0;
     uint32_t _last_anim_tick = 0;
