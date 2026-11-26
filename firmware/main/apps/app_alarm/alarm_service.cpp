@@ -187,6 +187,10 @@ void AlarmService::load_from_nvs_locked()
         a2.label_idx = 0;     // Alarm
         _alarms.push_back(a2);
     }
+
+    std::stable_sort(_alarms.begin(), _alarms.end(), [](const AlarmItem& a, const AlarmItem& b) {
+        return (a.hour * 60 + a.minute) < (b.hour * 60 + b.minute);
+    });
 }
 
 void AlarmService::save_to_nvs_locked()
@@ -259,6 +263,9 @@ void AlarmService::setAlarms(const std::vector<AlarmItem>& items)
     if (_alarms.size() > MAX_ALARMS) {
         _alarms.resize(MAX_ALARMS);
     }
+    std::stable_sort(_alarms.begin(), _alarms.end(), [](const AlarmItem& a, const AlarmItem& b) {
+        return (a.hour * 60 + a.minute) < (b.hour * 60 + b.minute);
+    });
     save_to_nvs_locked();
 }
 

@@ -127,7 +127,6 @@ private:
     void toggle_move();
     void toggle_lights();
     void toggle_shuffle();
-    void toggle_avatar_style();
     int random_index() const;
     void track_finished();
 
@@ -189,6 +188,9 @@ private:
     int _radio_page           = 0;
     std::string _saved_track_path;
     int _saved_track_idx      = 0;
+    bool _saved_radio_mode    = false;
+    int _saved_radio_idx      = 0;
+    std::string _saved_radio_url;
 
     // Wi-Fi Radio & Web Remote
     std::unique_ptr<MusicWifiService> _wifi_svc;
@@ -285,7 +287,7 @@ private:
 
     // 2. Settings view
     lv_obj_t* _settings_cont  = nullptr;
-    BtnWidget _cfg_btns[9];   // loop, shuf, lights, move, playlist, radio, web, head, avatar
+    BtnWidget _cfg_btns[8];   // loop, shuf, lights, move, playlist, radio, web, head
 
     // 3. Playlist view
     lv_obj_t* _list_cont        = nullptr;

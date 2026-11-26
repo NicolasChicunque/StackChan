@@ -1538,17 +1538,29 @@ void AppMcp::build_ui()
     const bool is_fix = (top_y > 0);
     const int hdr_y   = top_y + (is_fix ? 2 : 5);
     const int stage_y = top_y + (is_fix ? 22 : 26);
-    const int stage_h = 180 - stage_y;
+    const int stage_h = 160 - stage_y;
 
-    // App header below system status bar: MCP IP across full width (battery & volume are in top bar)
+    // App header below system status bar: MCP IP on left + live voice-activity meter on right
     _lbl_ip = lv_label_create(_root);
     lv_obj_set_pos(_lbl_ip, 10, hdr_y);
-    lv_obj_set_size(_lbl_ip, 300, 18);
+    lv_obj_set_size(_lbl_ip, 212, 18);
     lv_label_set_long_mode(_lbl_ip, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_ip, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_lbl_ip, lv_color_hex(COL_TEAL), 0);
     lv_label_set_text(_lbl_ip, "MCP  Wi-Fi...");
     _lbl_batt = nullptr;
+
+    _bar_level_bg = lv_obj_create(_root);
+    lv_obj_set_pos(_bar_level_bg, 228, hdr_y + 6);
+    lv_obj_set_size(_bar_level_bg, 82, 6);
+    style_box(_bar_level_bg, COL_CARD_HI, 3);
+    lv_obj_remove_flag(_bar_level_bg, LV_OBJ_FLAG_CLICKABLE);
+
+    _bar_level = lv_obj_create(_bar_level_bg);
+    lv_obj_set_pos(_bar_level, 0, 0);
+    lv_obj_set_size(_bar_level, 0, 6);
+    style_box(_bar_level, COL_TEAL, 3);
+    lv_obj_remove_flag(_bar_level, LV_OBJ_FLAG_CLICKABLE);
 
     // Center stage (non-clickable so accidental taps on avatars never interrupt playback/flow)
     _stage = lv_obj_create(_root);
@@ -1560,9 +1572,9 @@ void AppMcp::build_ui()
     lv_obj_remove_flag(_stage, LV_OBJ_FLAG_CLICKABLE);
 
     // Dual side-by-side avatar slots: Left = FREE (Flash-Lite), Right = AGENT $ (Coding Agent)
-    // Supports both Naruto sprites (custom/naruto) and classic StackChan face fallback (public)
+    // Supports both custom sprites (/sd/avatars) and classic StackChan face fallback
     const int slot_w       = 138;
-    const int slot_h       = stage_h - 32;
+    const int slot_h       = stage_h - 12;
     const int slot_x[2]    = {8, 158};
     const char* slot_txt[2] = {"FREE", "AGENT $"};
     const int naruto_scale = is_fix ? 104 : 114;
@@ -1622,24 +1634,14 @@ void AppMcp::build_ui()
         style_box(_face_mouth[i], COL_WHITE, 3);
     }
 
-    // Status line + live mic/speak meter at bottom of stage
-    _lbl_status = lv_label_create(_stage);
-    lv_obj_align(_lbl_status, LV_ALIGN_BOTTOM_MID, 0, -12);
-    lv_obj_set_width(_lbl_status, 286);
+    // Dedicated bottom status label (below avatar stage, above control buttons)
+    _lbl_status = lv_label_create(_root);
+    lv_obj_set_pos(_lbl_status, 10, 165);
+    lv_obj_set_size(_lbl_status, 300, 16);
     lv_obj_set_style_text_align(_lbl_status, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(_lbl_status, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_status, lv_color_hex(COL_TEXT), 0);
-
-    _bar_level_bg = lv_obj_create(_stage);
-    lv_obj_align(_bar_level_bg, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_obj_set_size(_bar_level_bg, 260, 4);
-    style_box(_bar_level_bg, COL_CARD_HI, 2);
-
-    _bar_level = lv_obj_create(_bar_level_bg);
-    lv_obj_set_pos(_bar_level, 0, 0);
-    lv_obj_set_size(_bar_level, 0, 4);
-    style_box(_bar_level, COL_TEAL, 2);
 
     // Bottom 3-button bar: TALK | AUTO | SET (Exit is in the top status bar)
     _btn_dictate = lv_button_create(_root);
@@ -1779,33 +1781,9 @@ void AppMcp::build_ui()
             LV_EVENT_CLICKED, this);
     }
 
-    // Row 3: Speaker Volume (10% .. 100%)
-    lv_obj_t* row_vol = make_row(row_y0 + row_step * 2, "VOLUME");
-    lv_obj_t* btn_vm  = make_btn(row_vol, 114, btn_ry, 48, btn_rh, "-", COL_CARD_HI, COL_WHITE);
-    lv_obj_add_event_cb(
-        btn_vm,
-        [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_volume(-10);
-        },
-        LV_EVENT_CLICKED, this);
-
-    _lbl_set_vol = lv_label_create(row_vol);
-    lv_obj_set_pos(_lbl_set_vol, 164, lbl_ry);
-    lv_obj_set_width(_lbl_set_vol, 72);
-    lv_obj_set_style_text_align(_lbl_set_vol, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(_lbl_set_vol, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_lbl_set_vol, lv_color_hex(COL_WHITE), 0);
-
-    lv_obj_t* btn_vp = make_btn(row_vol, 238, btn_ry, 48, btn_rh, "+", COL_CARD_HI, COL_WHITE);
-    lv_obj_add_event_cb(
-        btn_vp,
-        [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->change_volume(10);
-        },
-        LV_EVENT_CLICKED, this);
-
-    // Row 4: Speak Motion (OFF / ON)
-    lv_obj_t* row_move = make_row(row_y0 + row_step * 3, "MOVE");
+    // Row 3: Speak Motion (OFF / ON) — Volume is controlled via the global top status bar
+    _lbl_set_vol       = nullptr;
+    lv_obj_t* row_move = make_row(row_y0 + row_step * 2, "MOVE");
     _btn_move_off      = make_btn(row_move, 114, btn_ry, 84, btn_rh, "OFF", COL_CARD_HI, COL_WHITE);
     lv_obj_add_event_cb(
         _btn_move_off,
@@ -2011,32 +1989,32 @@ void AppMcp::refresh_ui(uint32_t now)
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_RED), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_STOP " SEND");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_RED), 0);
-        lv_obj_set_width(_bar_level, (_mic_level.load() * 260) / 100);
+        lv_obj_set_width(_bar_level, (_mic_level.load() * 82) / 100);
     } else if (rec) {
         lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_TEAL_DK), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " LISTENING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_TEAL), 0);
-        lv_obj_set_width(_bar_level, (_mic_level.load() * 260) / 100);
+        lv_obj_set_width(_bar_level, (_mic_level.load() * 82) / 100);
     } else if (spk) {
         lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_BLUE), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_VOLUME_MAX " SPEAKING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_BLUE), 0);
         int lv = std::clamp(_speak_rms.load() / 35, 6, 100);
-        lv_obj_set_width(_bar_level, (lv * 260) / 100);
+        lv_obj_set_width(_bar_level, (lv * 82) / 100);
     } else if (ready) {
         lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_GREEN), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_OK " SENDING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_GREEN), 0);
-        lv_obj_set_width(_bar_level, 260);
+        lv_obj_set_width(_bar_level, 82);
     } else if (waiting) {
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_YELLOW), 0);
         lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_BG), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_REFRESH " WAITING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_YELLOW), 0);
-        lv_obj_set_width(_bar_level, 260);
+        lv_obj_set_width(_bar_level, 82);
     } else {
         lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_TEAL_DK), 0);

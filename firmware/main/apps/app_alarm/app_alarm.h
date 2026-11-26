@@ -106,6 +106,7 @@ private:
     // Nightstand dim mode
     bool _night_mode           = false;
     uint8_t _saved_brightness  = 80;
+    uint32_t _night_entered_ms = 0;
 
     // Timer & Stopwatch state
     bool _chrono_tab           = false;  // false = Countdown Timer, true = Stopwatch

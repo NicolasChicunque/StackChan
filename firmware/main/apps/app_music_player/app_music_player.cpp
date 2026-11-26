@@ -62,6 +62,9 @@ constexpr const char* KEY_LIGHTS     = "lights";
 constexpr const char* KEY_MOVE       = "move";
 constexpr const char* KEY_LAST_IDX   = "last_idx";
 constexpr const char* KEY_LAST_PATH  = "last_path";
+constexpr const char* KEY_RADIO_MODE = "radio_mode";
+constexpr const char* KEY_RADIO_IDX  = "radio_idx";
+constexpr const char* KEY_RADIO_URL  = "radio_url";
 
 constexpr int W                  = 320;
 constexpr int H                  = 240;
@@ -132,8 +135,8 @@ struct CfgBtnSpec {
 // Settings screen layout:
 // Row 1: LOOP | SHUFFLE | LIGHTS | MOVE
 // Row 2: SD LIST | RADIO | WEB/QR | HEAD
-// Footer: AVATAR (Classic/Naruto toggle) + BACK (Exit is in the top status bar)
-constexpr CfgBtnSpec CFG_BTN_SPECS[9] = {
+// Footer: BACK (Avatar style is global in SETUP; Exit is in the top status bar)
+constexpr CfgBtnSpec CFG_BTN_SPECS[8] = {
     {"loop",     8,   66,  73,  54},
     {"shuf",     85,  66,  73,  54},
     {"lights",   162, 66,  73,  54},
@@ -142,7 +145,6 @@ constexpr CfgBtnSpec CFG_BTN_SPECS[9] = {
     {"radio",    85,  126, 73,  54},
     {"web",      162, 126, 73,  54},
     {"head",     239, 126, 73,  54},
-    {"avatar",   8,   188, 148, 44},
 };
 
 uint16_t read_u16_le(const uint8_t* p)
@@ -288,6 +290,32 @@ void AppMusicPlayer::onOpen()
 
     // 4b. Initialize companion Wi-Fi Radio & Web Remote service (lazy Wi-Fi connect)
     init_wifi_service();
+
+    // 4c. Restore last Radio state if user was listening to Internet Radio
+    if (_saved_radio_mode && _wifi_svc) {
+        auto stations = _wifi_svc->get_stations();
+        if (!stations.empty()) {
+            int restored_radio = -1;
+            if (!_saved_radio_url.empty()) {
+                for (int i = 0; i < static_cast<int>(stations.size()); ++i) {
+                    if (stations[i].url == _saved_radio_url) {
+                        restored_radio = i;
+                        break;
+                    }
+                }
+            }
+            if (restored_radio < 0 && _saved_radio_idx >= 0 &&
+                _saved_radio_idx < static_cast<int>(stations.size())) {
+                restored_radio = _saved_radio_idx;
+            }
+            _radio_index = (restored_radio >= 0) ? restored_radio : 0;
+            _radio_page  = _radio_index / PAGE_ROWS;
+            _radio_mode  = true;
+            _duration_ms = 0;
+            _byte_rate   = 0;
+            update_now_playing_title();
+        }
+    }
 
     // 5. Start audio decoding task (stack in PSRAM)
     start_audio_task();
@@ -1327,6 +1355,7 @@ void AppMusicPlayer::play_radio(int station_idx)
     _last_beat = 0xFFFFFFFF;
     set_status("TUNING RADIO...", 3500);
     update_now_playing_title();
+    save_last_track();
 
     _wifi_svc->start_radio(stations[_radio_index].url);
 }
@@ -1479,17 +1508,6 @@ void AppMusicPlayer::toggle_shuffle()
     _shuffle_on = !_shuffle_on;
     save_settings();
     set_status(std::string("SHUFFLE ") + (_shuffle_on ? "ON" : "OFF"));
-}
-
-void AppMusicPlayer::toggle_avatar_style()
-{
-    bool currently_naruto =
-        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
-    auto next_style =
-        currently_naruto ? stackchan::avatar::AvatarStyle::Classic : stackchan::avatar::AvatarStyle::Naruto;
-    stackchan::avatar::setAvatarStyle(next_style);
-    apply_avatar_style();
-    set_status(next_style == stackchan::avatar::AvatarStyle::Naruto ? "AVATAR NARUTO" : "AVATAR CLASSIC");
 }
 
 int AppMusicPlayer::random_index() const
@@ -1825,6 +1843,9 @@ void AppMusicPlayer::load_saved_prefs()
 
     _saved_track_idx  = settings.GetInt(KEY_LAST_IDX, 0);
     _saved_track_path = settings.GetString(KEY_LAST_PATH, "");
+    _saved_radio_mode = settings.GetBool(KEY_RADIO_MODE, false);
+    _saved_radio_idx  = settings.GetInt(KEY_RADIO_IDX, 0);
+    _saved_radio_url  = settings.GetString(KEY_RADIO_URL, "");
 }
 
 void AppMusicPlayer::save_settings()
@@ -1840,13 +1861,21 @@ void AppMusicPlayer::save_settings()
 
 void AppMusicPlayer::save_last_track()
 {
-    if (_tracks.empty() || _index < 0 || _index >= static_cast<int>(_tracks.size())) {
-        return;
-    }
     Settings settings(NVS_NS, true);
-    settings.SetInt(KEY_LAST_IDX, _index);
-    std::string cur_path(_tracks[_index].path.c_str(), _tracks[_index].path.size());
-    settings.SetString(KEY_LAST_PATH, cur_path);
+    const bool in_radio = _radio_mode.load();
+    settings.SetBool(KEY_RADIO_MODE, in_radio);
+    settings.SetInt(KEY_RADIO_IDX, _radio_index);
+    if (in_radio && _wifi_svc) {
+        auto stations = _wifi_svc->get_stations();
+        if (_radio_index >= 0 && _radio_index < static_cast<int>(stations.size())) {
+            settings.SetString(KEY_RADIO_URL, stations[_radio_index].url);
+        }
+    }
+    if (!_tracks.empty() && _index >= 0 && _index < static_cast<int>(_tracks.size())) {
+        settings.SetInt(KEY_LAST_IDX, _index);
+        std::string cur_path(_tracks[_index].path.c_str(), _tracks[_index].path.size());
+        settings.SetString(KEY_LAST_PATH, cur_path);
+    }
 }
 
 bool AppMusicPlayer::save_head_cfg()
@@ -2179,7 +2208,7 @@ void AppMusicPlayer::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 8; ++i) {
         const auto& spec  = CFG_BTN_SPECS[i];
         _cfg_btns[i].name = spec.name;
 
@@ -2233,18 +2262,16 @@ void AppMusicPlayer::build_ui()
                 } else if (std::strcmp(nm, "head") == 0) {
                     self->switch_mode(ScreenMode::Head);
                     return;
-                } else if (std::strcmp(nm, "avatar") == 0) {
-                    self->toggle_avatar_style();
                 }
                 self->refresh_settings_ui();
             },
             LV_EVENT_CLICKED, this);
     }
 
-    // Settings footer: AVATAR (left, above) | BACK (wide right)
+    // Settings footer: full-width BACK button (Avatar style is global in SETUP)
     lv_obj_t* btn_cfg_back = lv_button_create(_settings_cont);
-    lv_obj_set_pos(btn_cfg_back, 164, 188);
-    lv_obj_set_size(btn_cfg_back, 148, 44);
+    lv_obj_set_pos(btn_cfg_back, 8, 188);
+    lv_obj_set_size(btn_cfg_back, 304, 44);
     style_flat_box(btn_cfg_back, COL_PLAY_ON, 10);
     lv_obj_t* lbl_back = lv_label_create(btn_cfg_back);
     lv_obj_center(lbl_back);
@@ -2884,9 +2911,7 @@ void AppMusicPlayer::refresh_settings_ui()
         return;
     }
 
-    bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
-
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 8; ++i) {
         const char* nm = _cfg_btns[i].name;
         lv_obj_t* btn  = _cfg_btns[i].btn;
         lv_obj_t* lbl  = _cfg_btns[i].label;
@@ -2931,10 +2956,6 @@ void AppMusicPlayer::refresh_settings_ui()
             bg_col  = COL_CARD_HI;
             txt_col = COL_TEXT;
             text    = "HEAD";
-        } else if (std::strcmp(nm, "avatar") == 0) {
-            bg_col  = use_naruto ? COL_ACCENT_DK : COL_CARD_HI;
-            txt_col = use_naruto ? COL_YELLOW : COL_WHITE;
-            text    = std::string("AVATAR\n") + (use_naruto ? "NARUTO" : "CLASSIC");
         }
 
         lv_obj_set_style_bg_color(btn, lv_color_hex(bg_col), 0);

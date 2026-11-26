@@ -168,11 +168,6 @@ void AppAlarm::onOpen()
     _shown_naruto_idx      = -1;
     _shown_ring_naruto_idx = -1;
 
-    // Ensure Naruto avatar style is active on custom/naruto branch
-    if (_img_naruto_calm.data != nullptr) {
-        stackchan::avatar::setAvatarStyle(stackchan::avatar::AvatarStyle::Naruto);
-    }
-
     set_sync_text("RTC ready");
 
     // Subscribe physical gestures (Head pet -> Snooze, Shake -> Stop)
@@ -248,8 +243,8 @@ void AppAlarm::onRunning()
             update_ringing_motion(now);
         }
     } else {
-        // Wake from Night mode on head pet
-        if (_head_pet_flag.exchange(false) && _night_mode) {
+        // Wake from Night mode on head pet (with short guard so entry noise doesn't cancel Night)
+        if (_head_pet_flag.exchange(false) && _night_mode && (now - _night_entered_ms) >= 600) {
             LvglLockGuard lock;
             set_night_mode(false);
         }
@@ -387,6 +382,8 @@ void AppAlarm::set_night_mode(bool on)
 {
     _night_mode = on;
     if (on) {
+        _night_entered_ms = GetHAL().millis();
+        _head_pet_flag    = false;
         _saved_brightness = std::max<uint8_t>(GetHAL().getBackLightBrightness(), 50);
         GetHAL().setBackLightBrightness(10, false);
         GetHAL().showRgbColor(0, 0, 0);
@@ -1006,7 +1003,7 @@ void AppAlarm::build_ui()
         _stage,
         [](lv_event_t* e) {
             auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-            if (self->_night_mode) {
+            if (self->_night_mode && (GetHAL().millis() - self->_night_entered_ms) >= 400) {
                 self->set_night_mode(false);
             }
         },
@@ -1030,15 +1027,7 @@ void AppAlarm::build_ui()
     lv_obj_set_style_text_color(_lbl_date, lv_color_hex(COL_DIM), 0);
     lv_label_set_text(_lbl_date, "---");
 
-    // Center-right avatar: supports both Classic StackChan vector face and Naruto sprite
-    auto on_avatar_click = [](lv_event_t* e) {
-        auto* self = static_cast<AppAlarm*>(lv_event_get_user_data(e));
-        bool currently_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
-        auto next_style = currently_naruto ? stackchan::avatar::AvatarStyle::Classic : stackchan::avatar::AvatarStyle::Naruto;
-        stackchan::avatar::setAvatarStyle(next_style);
-        self->refresh_avatar_anim(GetHAL().millis());
-    };
-
+    // Center-right avatar: respects global SETUP -> Device -> Avatar setting (no in-app override)
     // Classic expressive StackChan avatar card
     _face_card = lv_obj_create(_stage);
     lv_obj_set_size(_face_card, 118, 86);
@@ -1046,8 +1035,7 @@ void AppAlarm::build_ui()
     style_box(_face_card, COL_BG, 14);
     lv_obj_set_style_border_width(_face_card, 2, 0);
     lv_obj_set_style_border_color(_face_card, lv_color_hex(COL_TEAL_DK), 0);
-    lv_obj_add_flag(_face_card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(_face_card, on_avatar_click, LV_EVENT_CLICKED, this);
+    lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_CLICKABLE);
 
     _face_eye_l = lv_obj_create(_face_card);
     lv_obj_set_size(_face_eye_l, 16, 16);
@@ -1064,7 +1052,7 @@ void AppAlarm::build_ui()
     lv_obj_align(_face_mouth, LV_ALIGN_CENTER, 0, 16);
     style_box(_face_mouth, COL_WHITE, 4);
 
-    // Naruto avatar image
+    // Custom sprite avatar image (loaded from /sd/avatars when enabled in SETUP)
     _avatar_img = lv_image_create(_stage);
     if (_img_naruto_calm.data != nullptr) {
         lv_image_set_src(_avatar_img, &_img_naruto_calm);
@@ -1072,8 +1060,7 @@ void AppAlarm::build_ui()
         lv_image_set_scale(_avatar_img, scale);
     }
     lv_obj_align(_avatar_img, LV_ALIGN_RIGHT_MID, -14, -10);
-    lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(_avatar_img, on_avatar_click, LV_EVENT_CLICKED, this);
+    lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
 
     _lbl_next = lv_label_create(_stage);
     lv_obj_align(_lbl_next, LV_ALIGN_BOTTOM_MID, 0, -10);
@@ -1084,8 +1071,8 @@ void AppAlarm::build_ui()
     lv_obj_set_style_text_color(_lbl_next, lv_color_hex(COL_AMBER), 0);
     lv_label_set_text(_lbl_next, "No active alarms");
 
-    // Bottom 4-button bar: ALARMS | TIMER | NIGHT | SET (Exit is in the top status bar)
-    lv_obj_t* btn_alarms = make_btn(_scr_clock, 8, 186, 88, 44, LV_SYMBOL_BELL " ALARMS", COL_TEAL_DK, COL_WHITE);
+    // Bottom 4-button bar: ALARMS | TIMER | NIGHT | SET (y=182, h=42 clears home indicator)
+    lv_obj_t* btn_alarms = make_btn(_scr_clock, 8, 182, 88, 42, LV_SYMBOL_BELL " ALARMS", COL_TEAL_DK, COL_WHITE);
     lv_obj_add_event_cb(
         btn_alarms,
         [](lv_event_t* e) {
@@ -1093,7 +1080,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_timer = make_btn(_scr_clock, 102, 186, 72, 44, "TIMER", COL_CARD, COL_AMBER);
+    lv_obj_t* btn_timer = make_btn(_scr_clock, 102, 182, 72, 42, "TIMER", COL_CARD, COL_AMBER);
     lv_obj_add_event_cb(
         btn_timer,
         [](lv_event_t* e) {
@@ -1101,8 +1088,11 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_night = make_btn(_scr_clock, 180, 186, 66, 44, "NIGHT", COL_CARD, COL_TEXT);
+    _btn_night = make_btn(_scr_clock, 180, 182, 66, 42, "NIGHT", COL_CARD, COL_TEXT);
     _lbl_night = lv_obj_get_child(_btn_night, 0);
+    if (_lbl_night) {
+        lv_obj_remove_flag(_lbl_night, LV_OBJ_FLAG_CLICKABLE);
+    }
     lv_obj_add_event_cb(
         _btn_night,
         [](lv_event_t* e) {
@@ -1110,7 +1100,7 @@ void AppAlarm::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    lv_obj_t* btn_set = make_btn(_scr_clock, 252, 186, 60, 44, LV_SYMBOL_SETTINGS " SET", COL_CARD, COL_TEXT);
+    lv_obj_t* btn_set = make_btn(_scr_clock, 252, 182, 60, 42, LV_SYMBOL_SETTINGS " SET", COL_CARD, COL_TEXT);
     lv_obj_add_event_cb(
         btn_set,
         [](lv_event_t* e) {
