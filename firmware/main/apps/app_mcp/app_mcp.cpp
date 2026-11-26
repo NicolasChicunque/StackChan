@@ -889,6 +889,7 @@ void AppMcp::play_wav_url(const std::string& url, bool wait_reply)
     _speak_rms = 0;
     _playing   = false;
     if (wait_reply && !_play_abort.load()) {
+        _agent_mode         = static_cast<int>(AgentMode::Engineer);
         _face               = static_cast<int>(FaceExpr::Thinking);
         _waiting_reply      = true;
         _auto_hold_until_ms = GetHAL().millis() + REPLY_WAIT_MS;
@@ -1277,9 +1278,6 @@ int AppMcp::handle_play(httpd_req* req)
 
     cJSON* jwait    = cJSON_GetObjectItem(root, "wait_reply");
     bool wait_reply = cJSON_IsTrue(jwait);
-    if (wait_reply) {
-        self->_agent_mode = static_cast<int>(AgentMode::Engineer);
-    }
 
     {
         std::lock_guard<std::mutex> lk(self->_play_mtx);
@@ -1552,20 +1550,14 @@ void AppMcp::build_ui()
     lv_label_set_text(_lbl_ip, "MCP  Wi-Fi...");
     _lbl_batt = nullptr;
 
-    // Center stage (tap to dictate / stop)
+    // Center stage (non-clickable so accidental taps on avatars never interrupt playback/flow)
     _stage = lv_obj_create(_root);
     lv_obj_set_pos(_stage, 8, stage_y);
     lv_obj_set_size(_stage, 304, stage_h);
     style_box(_stage, COL_CARD, 14);
     lv_obj_set_style_border_width(_stage, 1, 0);
     lv_obj_set_style_border_color(_stage, lv_color_hex(COL_CARD_HI), 0);
-    lv_obj_add_flag(_stage, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(
-        _stage,
-        [](lv_event_t* e) {
-            static_cast<AppMcp*>(lv_event_get_user_data(e))->toggle_dictation();
-        },
-        LV_EVENT_CLICKED, this);
+    lv_obj_remove_flag(_stage, LV_OBJ_FLAG_CLICKABLE);
 
     // Dual side-by-side avatar slots: Left = FREE (Flash-Lite), Right = AGENT $ (Coding Agent)
     // Supports both Naruto sprites (custom/naruto) and classic StackChan face fallback (public)
