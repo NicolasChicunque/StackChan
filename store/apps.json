@@ -1,5 +1,11 @@
 [
   {
+    "name": "Community Suite (All-in-One)",
+    "version": "1.1.0",
+    "description": "All custom apps in one build: Music + Internet Radio + QR Remote, Alarm/Timer/Stopwatch, Gemini Live, MCP Bridge, unified Home/Volume top bar, and MicroSD custom avatars (/sd/avatars).",
+    "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-community-suite-ota.bin"
+  },
+  {
     "name": "Music Player",
     "version": "1.0.0",
     "description": "Play MP3 music directly from the MicroSD card with track browsing, album controls, and background playback.",
