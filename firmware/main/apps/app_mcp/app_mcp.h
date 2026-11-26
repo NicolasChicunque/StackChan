@@ -152,7 +152,7 @@ private:
     std::atomic<uint32_t> _silence_stop_ms{2000};
     std::atomic<int> _mic_sens{1};  // 0=LOW, 1=MED, 2=HIGH
     std::atomic<bool> _speak_move{true};
-    std::atomic<int> _voice_idx{0};  // 0=Puck, 1=Kore, 2=Aoede, 3=Fenrir, 4=Zephyr
+    std::atomic<int> _voice_idx{0};  // 0=Puck, 1=Charon, 2=Kore, 3=Aoede, 4=Fenrir, 5=Zephyr
     bool _settings_open = false;
     mutable std::mutex _motion_mtx;
     std::deque<MotionCmd> _motion_cmds;
