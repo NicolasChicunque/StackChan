@@ -215,6 +215,7 @@ void AppMcp::onOpen()
     _rec_active          = false;
     _rec_speaking        = false;
     _rec_ready           = false;
+    _waiting_reply       = false;
     _rec_wav_bytes       = 0;
     _auto_hold_until_ms  = 0;
     _mic_level           = 0;
@@ -511,9 +512,11 @@ void AppMcp::mic_task_loop()
         size_t preroll_head  = 0;
         size_t preroll_count = 0;
 
-        _rec_stop_req = false;
+        _rec_stop_req  = false;
+        _waiting_reply = false;
         if (manual_req) {
-            _rec_ready = false;
+            _rec_ready          = false;
+            _auto_hold_until_ms = 0;
         }
         _rec_active   = true;
         _rec_speaking = false;
@@ -700,6 +703,7 @@ void AppMcp::play_wav_url(const std::string& url)
     }
 
     _play_abort      = false;
+    _waiting_reply   = false;
     _playing         = true;
     _play_started_ms = GetHAL().millis();
     _speak_rms       = 0;
@@ -1133,6 +1137,7 @@ int AppMcp::handle_audio_get(httpd_req* req)
     self->_rec_ready          = false;
     self->_rec_wav_bytes      = 0;
     self->_face               = static_cast<int>(FaceExpr::Thinking);
+    self->_waiting_reply      = true;
     self->_auto_hold_until_ms = GetHAL().millis() + REPLY_WAIT_MS;
     self->set_status_text("Waiting for Antigravity reply...");
     GetHAL().showRgbColor(64, 42, 0);
@@ -1368,6 +1373,7 @@ int AppMcp::handle_snapshot(httpd_req* req)
 int AppMcp::handle_listen_resume(httpd_req* req)
 {
     auto* self                = static_cast<AppMcp*>(req->user_ctx);
+    self->_waiting_reply      = false;
     self->_auto_hold_until_ms = 0;
     if (self->_face.load() == static_cast<int>(FaceExpr::Thinking)) {
         self->_face = static_cast<int>(FaceExpr::Calm);
@@ -1740,6 +1746,26 @@ void AppMcp::refresh_ui(uint32_t now)
         return;
     }
 
+    bool rec     = _rec_active.load();
+    bool hearing = _rec_speaking.load();
+    bool ready   = _rec_ready.load();
+    bool spk     = _playing.load();
+    bool auto_on = _auto_mode.load();
+    bool waiting = _waiting_reply.load();
+
+    if (waiting && static_cast<int32_t>(now - _auto_hold_until_ms.load()) >= 0) {
+        if (_waiting_reply.exchange(false)) {
+            if (_face.load() == static_cast<int>(FaceExpr::Thinking)) {
+                _face = static_cast<int>(FaceExpr::Calm);
+            }
+            if (!rec && !spk && !ready && !_play_pending.load()) {
+                set_status_text(auto_on ? "Hands-free: speak anytime" : "MCP Ready - Antigravity");
+                GetHAL().showRgbColor(0, 48, 42);
+            }
+        }
+        waiting = false;
+    }
+
     std::string ip;
     std::string st;
     {
@@ -1760,12 +1786,6 @@ void AppMcp::refresh_ui(uint32_t now)
 
     lv_label_set_text(_lbl_status, st.c_str());
 
-    bool rec     = _rec_active.load();
-    bool hearing = _rec_speaking.load();
-    bool ready   = _rec_ready.load();
-    bool spk     = _playing.load();
-    bool auto_on = _auto_mode.load();
-
     if (_btn_auto && _lbl_auto) {
         lv_obj_set_style_bg_color(_btn_auto, lv_color_hex(auto_on ? COL_TEAL_DK : COL_CARD), 0);
         lv_obj_set_style_text_color(_lbl_auto, lv_color_hex(auto_on ? COL_WHITE : COL_DIM), 0);
@@ -1773,27 +1793,31 @@ void AppMcp::refresh_ui(uint32_t now)
     }
 
     if (rec && hearing) {
+        lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_RED), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_STOP " SEND");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_RED), 0);
         lv_obj_set_width(_bar_level, (_mic_level.load() * 260) / 100);
     } else if (rec) {
+        lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_TEAL_DK), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " LISTENING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_TEAL), 0);
         lv_obj_set_width(_bar_level, (_mic_level.load() * 260) / 100);
     } else if (spk) {
+        lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_BLUE), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_VOLUME_MAX " SPEAKING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_BLUE), 0);
         int lv = std::clamp(_speak_rms.load() / 35, 6, 100);
         lv_obj_set_width(_bar_level, (lv * 260) / 100);
     } else if (ready) {
+        lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_GREEN), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_OK " SENDING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_GREEN), 0);
         lv_obj_set_width(_bar_level, 260);
-    } else if (auto_on && static_cast<int32_t>(now - _auto_hold_until_ms.load()) < 0) {
+    } else if (waiting) {
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_YELLOW), 0);
         lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_BG), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_REFRESH " WAITING");

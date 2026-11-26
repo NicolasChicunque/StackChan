@@ -125,6 +125,7 @@ private:
     std::atomic<bool> _rec_active{false};
     std::atomic<bool> _rec_speaking{false};
     std::atomic<bool> _rec_ready{false};
+    std::atomic<bool> _waiting_reply{false};
     std::atomic<uint32_t> _auto_hold_until_ms{0};
     std::atomic<int> _mic_level{0};
     mutable std::mutex _rec_mtx;

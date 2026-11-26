@@ -11,7 +11,7 @@ changes (local Piper TTS, local Faster-Whisper ASR, single-call conversation too
 | `stackchan-mcp-local-changes.patch` | Local changes on top of upstream commit `7673c4c` (only needed if the fork is not available) |
 | `stackchan-mcp.env.template` | `.env` template, secrets blanked |
 | `antigravity-mcp-config.example.json` | Antigravity MCP server entry |
-| `skills/charla/SKILL.md` | Antigravity `/charla` skill (token-saving Flash voice loop + escalation) |
+| `skills/stackchanchat/SKILL.md` | Antigravity `/stackchanchat` skill (token-saving background voice loop + escalation) |
 | `antigravity-voice-chat-mode.rule.md` | Optional pointer rule for plain phrases |
 
 ## 1. Requirements
@@ -53,17 +53,18 @@ into `D:\StackChan\stackchan-mcp\models\piper\`.
 - `STACKCHAN_IP`: IP address shown by the MCP app on the device
 - `TTS_ENGINE="piper"`, `STACKCHAN_ASR_ENGINE="whisper"`, `STACKCHAN_WHISPER_MODEL="small"`
 - `STACKCHAN_PIPER_MODEL`: full path to the `.onnx` file
-- Keys and tokens stay empty and are never committed.
+- `GEMINI_API_KEY`: Gemini API key used by `scripts/stackchan_chat.py`
+- Keys and tokens stay empty in the template and are never committed.
 
 ## 6. Register in Antigravity
 Copy the `stackchan` block from `antigravity-mcp-config.example.json` into
 `C:\Users\<user>\.gemini\config\mcp_config.json`, then restart Antigravity.
 
-## 7. Install the `/charla` skill
-Copy the `skills\charla` folder into `C:\Users\<user>\.gemini\config\skills\charla\`:
+## 7. Install the `/stackchanchat` skill
+Copy the `skills\stackchanchat` folder into `C:\Users\<user>\.gemini\config\skills\stackchanchat\`:
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.gemini\config\skills\charla" | Out-Null
-Copy-Item D:\StackChan\StackChan\host\stackchan-mcp\skills\charla\SKILL.md "$env:USERPROFILE\.gemini\config\skills\charla\SKILL.md"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.gemini\config\skills\stackchanchat" | Out-Null
+Copy-Item D:\StackChan\StackChan\host\stackchan-mcp\skills\stackchanchat\SKILL.md "$env:USERPROFILE\.gemini\config\skills\stackchanchat\SKILL.md"
 ```
 (Optional) Copy `antigravity-voice-chat-mode.rule.md` into `C:\Users\<user>\.gemini\config\rules\`.
 
@@ -80,4 +81,4 @@ python -m esptool --chip esp32s3 -p COM3 -b 460800 write-flash 0x20000 build\sta
 ```
 
 ## 9. Verify
-Open the `MCP` app on StackChan, run `stackchan_status`, then say "modo charla".
+Open the `MCP` app on StackChan, run `stackchan_status`, then invoke `/stackchanchat`.
