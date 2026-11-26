@@ -2659,11 +2659,12 @@ void AppGemini::build_ui()
                             std::lock_guard<std::mutex> lk(self->_mcp_mtx);
                             ip = self->_ip_str;
                         }
-                        char buf[200];
+                        char buf[220];
                         std::snprintf(buf, sizeof(buf),
                                       "ACTIVATE AGENT $ (MCP)\n"
-                                      "1. Set STACKCHAN_IP=%s on PC\n"
-                                      "2. Open Antigravity/Claude & run /stackchanchat\n"
+                                      "1. In stackchan-mcp/.env set:\n"
+                                      "   STACKCHAN_IP=%s\n"
+                                      "2. Run /stackchanchat in Antigravity/Claude\n"
                                       "(tap to close)",
                                       ip.empty() ? "Connecting..." : ip.c_str());
                         lv_label_set_text(self->_lbl_mcp_help, buf);
