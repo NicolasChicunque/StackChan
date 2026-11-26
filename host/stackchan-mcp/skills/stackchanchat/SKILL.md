@@ -40,11 +40,16 @@ engineering work.
 4. **Handle escalation**: When the user asks for technical work, the script
    prints `[ESCALATED] Task: <summary>` and exits. Execute the requested work
    with the main agent's tools:
-   - **If you need user confirmation or a follow-up answer**: speak a concise,
-     clear summary of what you are asking using `stackchan_converse` (with
-     `gesture=""` so the firmware handles speech motion) so StackChan keeps
-     listening and delivers the user's spoken reply straight back to you with
-     full context.
+   - **If you need user confirmation or a follow-up answer**: launch a
+     single-turn background listener with **no timeout** (`IsDaemon=true`,
+     `WaitMsBeforeAsync=500`) so the user never hits a 60s timeout while
+     reading or thinking:
+     ```powershell
+     cd D:\StackChan\stackchan-mcp; uv run python -u scripts/stackchan_chat.py --lang auto --wait-reply --say "<concise spoken question>" 2>&1
+     ```
+     Then stop calling tools and wait: as soon as the user replies by voice,
+     the script prints `[USER_REPLY (<lang>)] <text>` and exits, waking you up
+     automatically with full context.
    - **Once the technical work is complete**: speak a concise summary via
      `stackchan_say` and immediately re-launch
      `scripts/stackchan_chat.py --lang auto --no-greeting` so StackChan stays
