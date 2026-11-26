@@ -337,6 +337,7 @@ void AppGemini::onOpen()
     _last_rendered_agent  = false;
     _last_rendered_sub.clear();
     _settings_open        = false;
+    _settings_paused_mic  = false;
     _voice_dirty          = false;
 
     _httpd_ok             = false;
@@ -347,6 +348,8 @@ void AppGemini::onOpen()
     _mcp_handoff_speaking   = false;
     _mcp_handoff_started_ms = 0;
     _mcp_end_pending        = false;
+    _pause_pending          = false;
+    _mute_after_speak       = false;
     _mcp_wait_reply_mode    = false;
     _mcp_escalation_ready   = false;
     _mcp_reply_ready        = false;
@@ -827,18 +830,30 @@ bool AppGemini::send_setup_message(bool include_search, bool include_mcp_tools)
     cJSON* prebuilt   = cJSON_AddObjectToObject(voice_cfg, "prebuiltVoiceConfig");
     cJSON_AddStringToObject(prebuilt, "voiceName", _voice_name.empty() ? DEFAULT_VOICE : _voice_name.c_str());
 
-    // Tools: optional Google Search + optional MCP escalation tools when /stackchanchat is attached
-    if (include_search || include_mcp_tools) {
+    // Tools: optional Google Search + pause_listening (always) + MCP escalation tools when attached
+    {
         cJSON* tools = cJSON_AddArrayToObject(setup, "tools");
         if (include_search) {
             cJSON* search_tool = cJSON_CreateObject();
             cJSON_AddObjectToObject(search_tool, "googleSearch");
             cJSON_AddItemToArray(tools, search_tool);
         }
-        if (include_mcp_tools) {
-            cJSON* fn_wrap = cJSON_CreateObject();
-            cJSON* fns     = cJSON_AddArrayToObject(fn_wrap, "functionDeclarations");
+        cJSON* fn_wrap = cJSON_CreateObject();
+        cJSON* fns     = cJSON_AddArrayToObject(fn_wrap, "functionDeclarations");
 
+        // pause_listening() - always available so user can pause/mute by voice
+        cJSON* fn_pause = cJSON_CreateObject();
+        cJSON_AddStringToObject(fn_pause, "name", "pause_listening");
+        cJSON_AddStringToObject(
+            fn_pause, "description",
+            "Mute and pause the robot microphone when the user asks to pause, mute, stop talking, "
+            "dejemos de hablar, pausa, silencio, descansa, or take a break.");
+        cJSON* pause_params = cJSON_AddObjectToObject(fn_pause, "parameters");
+        cJSON_AddStringToObject(pause_params, "type", "OBJECT");
+        cJSON_AddObjectToObject(pause_params, "properties");
+        cJSON_AddItemToArray(fns, fn_pause);
+
+        if (include_mcp_tools) {
             // escalate_to_engineer(task)
             cJSON* fn_esc = cJSON_CreateObject();
             cJSON_AddStringToObject(fn_esc, "name", "escalate_to_engineer");
@@ -860,14 +875,14 @@ bool AppGemini::send_setup_message(bool include_search, bool include_mcp_tools)
             cJSON* fn_end = cJSON_CreateObject();
             cJSON_AddStringToObject(fn_end, "name", "end_chat");
             cJSON_AddStringToObject(fn_end, "description",
-                                    "Detach MCP mode when the user says goodbye, stop, terminamos, or end chat.");
+                                    "Detach MCP mode and pause when the user says goodbye, terminamos, chao, or end chat.");
             cJSON* end_params = cJSON_AddObjectToObject(fn_end, "parameters");
             cJSON_AddStringToObject(end_params, "type", "OBJECT");
             cJSON_AddObjectToObject(end_params, "properties");
             cJSON_AddItemToArray(fns, fn_end);
-
-            cJSON_AddItemToArray(tools, fn_wrap);
         }
+
+        cJSON_AddItemToArray(tools, fn_wrap);
     }
 
     cJSON* sys_inst = cJSON_AddObjectToObject(setup, "systemInstruction");
@@ -876,7 +891,9 @@ bool AppGemini::send_setup_message(bool include_search, bool include_mcp_tools)
     std::string sys_prompt =
         "You are StackChan, a calm, friendly, and conversational desktop robot companion. "
         "Speak in a relaxed, natural, balanced tone — never overly intense or hyper. "
-        "Keep replies concise (1-2 short natural sentences) in the user's spoken language.";
+        "Keep replies concise (1-2 short natural sentences) in the user's spoken language. "
+        "If the user asks to pause, mute, stop talking, dejemos de hablar, pausa, silencio, or descansa, "
+        "IMMEDIATELY call `pause_listening`.";
     if (include_search) {
         sys_prompt += " You have live Google Search enabled; use it for current news, weather, dates, and live facts.";
     }
@@ -886,7 +903,7 @@ bool AppGemini::send_setup_message(bool include_search, bool include_mcp_tools)
             "If the user asks for code edits, repository/file/log inspection, git/build/flash commands, "
             "project architecture changes, OR asks you to pass/relay/tell anything to the engineer or agent, "
             "IMMEDIATELY call `escalate_to_engineer` without replying conversationally first. "
-            "If the user says goodbye, terminamos, or end chat, call `end_chat`.";
+            "If the user says goodbye, terminamos, chao, or end chat to close MCP mode, call `end_chat`.";
         std::string ctx;
         {
             std::lock_guard<std::mutex> lk(_mcp_mtx);
@@ -1163,7 +1180,7 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                             _pcm_ring.push(reinterpret_cast<const int16_t*>(_b64_decode_buf), samples);
                             SessionState cur = static_cast<SessionState>(_state.load());
                             if (cur == SessionState::Thinking || cur == SessionState::Ready ||
-                                _mcp_handoff_speaking.load()) {
+                                _mcp_handoff_speaking.load() || _mute_after_speak.load()) {
                                 set_state(SessionState::Speaking);
                             }
                         }
@@ -1214,10 +1231,10 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                 _mcp_reply_ready = true;
                 set_state(SessionState::AgentWait);
                 set_subtitle("Reply sent to engineer...");
-            } else if (_mcp_handoff_speaking.load() &&
+            } else if ((_mcp_handoff_speaking.load() || _mute_after_speak.load()) &&
                        static_cast<SessionState>(_state.load()) != SessionState::Speaking &&
                        _pcm_ring.available() == 0) {
-                // Ignore the empty turnComplete from toolResponse while waiting for Charon's handoff audio
+                // Ignore the empty turnComplete from toolResponse while waiting for Charon's handoff/goodbye audio
                 _server_turn_done = false;
             } else {
                 _server_turn_done  = true;
@@ -1281,6 +1298,14 @@ void AppGemini::handle_server_json(const char* data, size_t len)
                         _mcp_handoff_call_name = fn_name;
                     }
                     _mcp_end_pending = true;
+                    break;
+                } else if (fn_name == "pause_listening") {
+                    {
+                        std::lock_guard<std::mutex> lk(_mcp_mtx);
+                        _mcp_handoff_call_id   = fn_id;
+                        _mcp_handoff_call_name = fn_name;
+                    }
+                    _pause_pending = true;
                     break;
                 }
             }
@@ -1490,13 +1515,54 @@ void AppGemini::net_task_loop()
             continue;
         }
 
+        if (_pause_pending.exchange(false)) {
+            std::string cid;
+            {
+                std::lock_guard<std::mutex> lk(_mcp_mtx);
+                cid = _mcp_handoff_call_id;
+            }
+            if (codec && codec->input_enabled()) {
+                codec->EnableInput(false);
+            }
+            _want_arm_listen = false;
+            if (_ws && _ws->IsConnected()) {
+                _mute_after_speak = true;
+                _server_turn_done = false;
+                set_state(SessionState::Thinking);
+                if (!cid.empty()) {
+                    std::string tr = "{\"toolResponse\":{\"functionResponses\":[{\"id\":\"" + cid +
+                                     "\",\"name\":\"pause_listening\",\"response\":{\"status\":\"ok\"}}]}}";
+                    _ws->Send(tr);
+                }
+                _ws->Send(
+                    "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":"
+                    "\"Di exactamente esta frase corta en el idioma del usuario y nada mas: "
+                    "Listo, quedo en pausa. Toca RESUME cuando quieras hablar.\"}]}],\"turnComplete\":true}}");
+            } else {
+                _muted = true;
+                set_state(SessionState::Ready);
+                set_subtitle("Paused. Tap RESUME to talk");
+            }
+            continue;
+        }
+
         if (_mcp_end_pending.exchange(false)) {
             std::string cid;
             {
                 std::lock_guard<std::mutex> lk(_mcp_mtx);
                 cid = _mcp_handoff_call_id;
             }
+            if (codec && codec->input_enabled()) {
+                codec->EnableInput(false);
+            }
+            _want_arm_listen    = false;
+            _mcp_attached       = false;
+            _mcp_agent_active   = false;
+            _mcp_lease_until_ms = 0;
             if (_ws && _ws->IsConnected()) {
+                _mute_after_speak = true;
+                _server_turn_done = false;
+                set_state(SessionState::Thinking);
                 if (!cid.empty()) {
                     std::string tr = "{\"toolResponse\":{\"functionResponses\":[{\"id\":\"" + cid +
                                      "\",\"name\":\"end_chat\",\"response\":{\"status\":\"ok\"}}]}}";
@@ -1505,11 +1571,12 @@ void AppGemini::net_task_loop()
                 _ws->Send(
                     "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":"
                     "\"Di exactamente esta frase corta en el idioma del usuario y nada mas: "
-                    "Listo, cerramos el modo agente. Sigo disponible aqui.\"}]}],\"turnComplete\":true}}");
+                    "Listo, cerramos el modo agente y quedo en pausa.\"}]}],\"turnComplete\":true}}");
+            } else {
+                _muted = true;
+                set_state(SessionState::Ready);
+                set_subtitle("Paused. Tap RESUME to talk");
             }
-            _mcp_attached       = false;
-            _mcp_agent_active   = false;
-            _mcp_lease_until_ms = 0;
             continue;
         }
 
@@ -1531,7 +1598,7 @@ void AppGemini::net_task_loop()
         }
 
         if (_want_arm_listen.exchange(false)) {
-            if (_mcp_handoff_speaking.load()) {
+            if (_mcp_handoff_speaking.load() || _mute_after_speak.load() || _settings_open) {
                 continue;
             }
             if (_muted.load()) {
@@ -1702,6 +1769,11 @@ void AppGemini::spk_task_loop()
                             _mcp_escalation_ready = true;
                             set_state(SessionState::AgentWait);
                             set_subtitle("Waiting for lead engineer...");
+                        } else if (_mute_after_speak.exchange(false)) {
+                            // Charon finished speaking pause/goodbye: enter MUTED cleanly until user taps RESUME
+                            _muted = true;
+                            set_state(SessionState::Ready);
+                            set_subtitle("Paused. Tap RESUME to talk");
                         } else if (_mcp_wait_reply_mode.load() || _want_arm_listen.load()) {
                             // Wait-reply mode: play_http_wav arms listening cleanly; do NOT force AgentWait
                             _want_arm_listen = true;
@@ -1721,9 +1793,10 @@ void AppGemini::spk_task_loop()
                 frac_pos = 0.0;
             } else if (!output_active && _server_turn_done.load() &&
                        static_cast<SessionState>(_state.load()) == SessionState::Thinking) {
-                // Model completed a turn with no audio output; never re-arm mic during handoff or AGENT $ wait
+                // Model completed a turn with no audio output; never re-arm mic during handoff, pause, or AGENT $ wait
                 _server_turn_done = false;
-                if (!_mcp_handoff_speaking.load() && !_mcp_agent_active.load() && !_closing.load() && !_muted.load()) {
+                if (!_mcp_handoff_speaking.load() && !_mute_after_speak.load() && !_mcp_agent_active.load() &&
+                    !_closing.load() && !_muted.load()) {
                     _want_arm_listen = true;
                 }
             }
@@ -2337,7 +2410,7 @@ int AppGemini::handle_face(httpd_req* req)
 
 void AppGemini::on_primary_button()
 {
-    if (_mcp_handoff_speaking.load()) {
+    if (_mcp_handoff_speaking.load() || _mute_after_speak.load() || _settings_open) {
         return;
     }
     SessionState st = static_cast<SessionState>(_state.load());
@@ -2403,11 +2476,19 @@ void AppGemini::change_volume(int delta)
 
 void AppGemini::open_settings()
 {
-    if (!_settings_cont) {
+    if (!_settings_cont || _mcp_handoff_speaking.load() || _mute_after_speak.load() || _mcp_agent_active.load()) {
         return;
     }
-    _settings_open = true;
-    _voice_dirty   = false;
+    SessionState st = static_cast<SessionState>(_state.load());
+    if (st != SessionState::Listening && st != SessionState::Ready && st != SessionState::Error) {
+        return;
+    }
+    _settings_open       = true;
+    _voice_dirty         = false;
+    _settings_paused_mic = (st == SessionState::Listening && !_muted.load());
+    if (_settings_paused_mic) {
+        _want_mute = true;
+    }
     refresh_settings_ui();
     lv_obj_remove_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
 }
@@ -2421,11 +2502,20 @@ void AppGemini::close_settings()
     lv_obj_add_flag(_settings_cont, LV_OBJ_FLAG_HIDDEN);
     save_voice_pitch_to_nvs();
 
+    const bool resume_mic = _settings_paused_mic;
+    _settings_paused_mic  = false;
+
     if (_voice_dirty && !_api_key.empty()) {
         _voice_dirty = false;
         _pcm_ring.clear();
+        if (resume_mic) {
+            _muted = false;
+        }
         set_subtitle("Applying voice: " + _voice_name + "...");
         _want_connect = true;
+    } else if (resume_mic) {
+        _muted           = false;
+        _want_arm_listen = true;
     }
 }
 
@@ -3168,14 +3258,14 @@ void AppGemini::refresh_ui(uint32_t now)
                 btn_col   = COL_CARD_HI;
                 break;
             case SessionState::Ready:
-                badge_txt = "GEMINI  MUTED";
+                badge_txt = mcp_on ? "LIVE + MCP  MUTED" : "GEMINI  MUTED";
                 badge_col = COL_DIM;
                 btn_txt   = LV_SYMBOL_AUDIO " RESUME";
                 btn_col   = COL_GEMINI_BLUE;
                 break;
             case SessionState::Listening:
-                badge_txt = "GEMINI  LISTENING";
-                badge_col = COL_GEMINI_BLUE;
+                badge_txt = mcp_on ? "LIVE + MCP  READY" : "GEMINI  LISTENING";
+                badge_col = mcp_on ? COL_CYAN : COL_GEMINI_BLUE;
                 btn_txt   = LV_SYMBOL_MUTE " MUTE";
                 btn_col   = COL_CARD_HI;
                 break;
@@ -3227,6 +3317,20 @@ void AppGemini::refresh_ui(uint32_t now)
             lv_obj_remove_state(_btn_primary, LV_STATE_DISABLED);
             lv_obj_set_style_opa(_btn_primary, LV_OPA_COVER, 0);
             lv_obj_set_style_text_color(_lbl_primary, lv_color_hex(COL_WHITE), 0);
+        }
+
+        if (_btn_settings) {
+            const bool set_allowed =
+                (st == SessionState::Listening || st == SessionState::Ready || st == SessionState::Error) && !agent_on;
+            if (set_allowed) {
+                lv_obj_add_flag(_btn_settings, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_remove_state(_btn_settings, LV_STATE_DISABLED);
+                lv_obj_set_style_opa(_btn_settings, LV_OPA_COVER, 0);
+            } else {
+                lv_obj_remove_flag(_btn_settings, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_add_state(_btn_settings, LV_STATE_DISABLED);
+                lv_obj_set_style_opa(_btn_settings, LV_OPA_40, 0);
+            }
         }
     }
 

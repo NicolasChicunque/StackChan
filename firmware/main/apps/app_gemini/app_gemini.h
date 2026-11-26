@@ -153,8 +153,9 @@ private:
     std::atomic<int> _pitch_pct{100};
     std::atomic<int> _mic_sens{1};  // 0=LOW, 1=MED, 2=HIGH
     std::atomic<bool> _speak_move{true};
-    bool _settings_open     = false;
-    bool _voice_dirty       = false;
+    bool _settings_open       = false;
+    bool _settings_paused_mic = false;
+    bool _voice_dirty         = false;
     int _volume             = 75;
 
     std::atomic<int> _state{static_cast<int>(SessionState::NeedKey)};
@@ -182,6 +183,8 @@ private:
     std::atomic<bool> _mcp_handoff_speaking{false};
     std::atomic<uint32_t> _mcp_handoff_started_ms{0};
     std::atomic<bool> _mcp_end_pending{false};
+    std::atomic<bool> _pause_pending{false};
+    std::atomic<bool> _mute_after_speak{false};
     std::atomic<bool> _mcp_wait_reply_mode{false};
     std::atomic<bool> _mcp_escalation_ready{false};
     std::atomic<bool> _mcp_reply_ready{false};
