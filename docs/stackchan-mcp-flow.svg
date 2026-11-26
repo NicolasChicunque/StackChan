@@ -1,23 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 1160" width="920" height="1160" role="img" aria-label="StackChan MCP Vertical Voice Flow">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 1120" width="920" height="1120" role="img" aria-label="StackChan Unified AppGemini + Auto-Attach MCP Flow">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#0B1020"/>
       <stop offset="100%" stop-color="#131B30"/>
     </linearGradient>
-    <marker id="arr-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-      <path d="M 0 1 L 10 5 L 0 9 z" fill="#2DD4BF"/>
-    </marker>
-    <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-      <path d="M 0 1 L 10 5 L 0 9 z" fill="#60A5FA"/>
+    <marker id="arr-purp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#C77DFF"/>
     </marker>
     <marker id="arr-cyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M 0 1 L 10 5 L 0 9 z" fill="#38BDF8"/>
     </marker>
-    <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-      <path d="M 0 1 L 10 5 L 0 9 z" fill="#34D399"/>
-    </marker>
     <marker id="arr-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M 0 1 L 10 5 L 0 9 z" fill="#FBBF24"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#60A5FA"/>
     </marker>
     <style>
       .title { font: 700 24px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
@@ -33,135 +30,116 @@
   </defs>
 
   <!-- Canvas -->
-  <rect width="920" height="1160" rx="20" fill="url(#bg)"/>
-  <rect x="1" y="1" width="918" height="1158" rx="19" fill="none" stroke="#24314F" stroke-width="1.5"/>
+  <rect width="920" height="1120" rx="20" fill="url(#bg)"/>
+  <rect x="1" y="1" width="918" height="1118" rx="19" fill="none" stroke="#24314F" stroke-width="1.5"/>
 
   <!-- Header -->
-  <text x="460" y="44" text-anchor="middle" class="title">StackChan MCP — Voice Flow (LIVE Primary + Auto-Fallback)</text>
-  <text x="460" y="68" text-anchor="middle" class="sub">Screen badges: LIVE 3.8 Primary (Cyan)  →  Auto-Fallback FREE 3.5 LITE (Green)  →  Escalation AGENT $ (Amber)</text>
+  <text x="460" y="44" text-anchor="middle" class="title">StackChan — Unified GEMINI + Auto-Attach MCP Flow</text>
+  <text x="460" y="68" text-anchor="middle" class="sub">ESP32-S3 runs Gemini 3.8 Live natively (0 Whisper · 0 PC API Key) · /stackchanchat auto-attaches AGENT $ via HTTP lease</text>
 
   <!-- Color Legend Strip -->
-  <g transform="translate(162, 84)">
-    <rect x="0" y="0" width="196" height="24" rx="12" fill="#0E2235" stroke="#38BDF8" stroke-width="1.6"/>
-    <circle cx="14" cy="12" r="4" fill="#38BDF8"/>
-    <text x="24" y="16" class="chip" fill="#38BDF8">1. PRIMARY · LIVE 3.8 (Cyan)</text>
+  <g transform="translate(148, 84)">
+    <rect x="0" y="0" width="194" height="24" rx="12" fill="#1B1330" stroke="#C77DFF" stroke-width="1.5"/>
+    <circle cx="14" cy="12" r="4" fill="#C77DFF"/>
+    <text x="24" y="16" class="chip" fill="#C77DFF">STANDALONE · 1 Avatar</text>
 
-    <rect x="208" y="0" width="210" height="24" rx="12" fill="#112624" stroke="#34D399" stroke-width="1.4"/>
-    <circle cx="222" cy="12" r="4" fill="#34D399"/>
-    <text x="232" y="16" class="chip" fill="#34D399">2. FALLBACK · FREE 3.5 (Green)</text>
+    <rect x="208" y="0" width="206" height="24" rx="12" fill="#0E2235" stroke="#38BDF8" stroke-width="1.6"/>
+    <circle cx="222" cy="12" r="4" fill="#38BDF8"/>
+    <text x="232" y="16" class="chip" fill="#38BDF8">LIVE + MCP · Left Avatar</text>
 
-    <rect x="430" y="0" width="166" height="24" rx="12" fill="#2A1E10" stroke="#FBBF24" stroke-width="1.4"/>
-    <circle cx="444" cy="12" r="4" fill="#FBBF24"/>
-    <text x="454" y="16" class="chip" fill="#FBBF24">3. ESCALATE · AGENT $</text>
+    <rect x="428" y="0" width="196" height="24" rx="12" fill="#2A1E10" stroke="#FBBF24" stroke-width="1.5"/>
+    <circle cx="442" cy="12" r="4" fill="#FBBF24"/>
+    <text x="452" y="16" class="chip" fill="#FBBF24">AGENT $ · Right Avatar</text>
   </g>
 
-  <!-- STEP 0: SESSION START -->
+  <!-- STEP 0: STANDALONE ROBOT -->
   <g transform="translate(140, 128)">
-    <rect width="640" height="96" rx="14" fill="#121E36" stroke="#2DD4BF" stroke-width="2"/>
-    <text x="18" y="24" class="step" fill="#2DD4BF">STEP 0 · SESSION START</text>
-    <rect x="478" y="10" width="144" height="20" rx="10" fill="#0E2235" stroke="#38BDF8" stroke-width="1"/>
-    <circle cx="492" cy="20" r="3.5" fill="#38BDF8"/>
-    <text x="502" y="24" class="chip" fill="#38BDF8">IDLE → LIVE 3.8</text>
-    <text x="18" y="48" class="h">Open MCP App on StackChan  →  Run /stackchanchat in Antigravity</text>
-    <text x="18" y="69" class="p">• StackChan opens in IDLE (mic OFF) exposing HTTP :80 and color-coded POST /agent_mode</text>
-    <text x="18" y="86" class="p">• /stackchanchat launches stackchan_live.py automatically (Cyan LIVE 3.8 badge, 0 IDE quota)</text>
+    <rect width="640" height="104" rx="14" fill="#1B1330" stroke="#C77DFF" stroke-width="2"/>
+    <text x="18" y="24" class="step" fill="#C77DFF">STEP 0 · STANDALONE MODE (NO PC NEEDED)</text>
+    <rect x="486" y="10" width="136" height="20" rx="10" fill="#130D24" stroke="#C77DFF" stroke-width="1"/>
+    <text x="554" y="24" text-anchor="middle" class="chip" fill="#C77DFF">1 BIG AVATAR</text>
+    <text x="18" y="48" class="h">Open GEMINI App on StackChan (ESP32-S3)</text>
+    <text x="18" y="70" class="p">• Connects directly over Wi-Fi (WSS) to Gemini 3.8 Live using /sd/config/gemini.txt + NVS</text>
+    <text x="18" y="90" class="p">• Calibrated VAD (MIC LOW/MED/HIGH + 600ms echo guard), 8 voices, Pitch &amp; gentle head motion</text>
   </g>
 
   <!-- Arrow 0 -> 1 -->
-  <line x1="460" y1="224" x2="460" y2="264" stroke="#38BDF8" stroke-width="2.5" marker-end="url(#arr-cyan)"/>
-  <text x="472" y="248" class="el" fill="#38BDF8">Arms hands-free mic + lights up Cyan LIVE 3.8</text>
+  <line x1="460" y1="232" x2="460" y2="274" stroke="#38BDF8" stroke-width="2.5" marker-end="url(#arr-cyan)"/>
+  <text x="472" y="257" class="el" fill="#38BDF8">/stackchanchat sends POST /mcp/attach (25s heartbeat lease)</text>
 
-  <!-- STEP 1: YOU & ROBOT -->
-  <g transform="translate(140, 270)">
-    <rect width="640" height="86" rx="14" fill="#142038" stroke="#2DD4BF" stroke-width="2"/>
-    <text x="18" y="24" class="step" fill="#2DD4BF">STEP 1 · YOU &amp; STACKCHAN (ESP32-S3)</text>
-    <text x="18" y="48" class="h">Speak Hands-Free (AUTO) or Tap TALK</text>
-    <text x="18" y="70" class="p">• Local ESP32 VAD records 16 kHz mono WAV (level bar in top IP bar) &amp; serves GET /audio</text>
+  <!-- STEP 1: AUTO-ATTACH DUAL MODE -->
+  <g transform="translate(140, 280)">
+    <rect width="640" height="104" rx="14" fill="#0E2235" stroke="#38BDF8" stroke-width="2.2"/>
+    <text x="18" y="24" class="step" fill="#38BDF8">STEP 1 · MCP AUTO-ATTACH (ESP32-NATIVE LIVE + PC BRIDGE)</text>
+    <rect x="470" y="10" width="152" height="20" rx="10" fill="#091826" stroke="#38BDF8" stroke-width="1"/>
+    <text x="546" y="24" text-anchor="middle" class="chip" fill="#38BDF8">2 AVATARS · 0 IDE QUOTA</text>
+    <text x="18" y="48" class="h">Screen expands to Dual Avatars: LIVE Charon (Cyan) | AGENT $ (Amber)</text>
+    <text x="18" y="70" class="p">• ESP32 adds escalate_to_engineer() &amp; end_chat() tools to its own Gemini 3.8 Live WSS session</text>
+    <text x="18" y="90" class="p">• Lightweight stackchan_bridge.py on PC holds heartbeat &amp; polls /mcp/escalation (0 Whisper!)</text>
   </g>
 
-  <!-- Primary Arrow 1 -> 2A (LIVE 3.8) -->
-  <line x1="278" y1="356" x2="278" y2="404" stroke="#38BDF8" stroke-width="2.6" marker-end="url(#arr-cyan)"/>
-  <text x="290" y="385" class="el" fill="#38BDF8">Primary path (default)</text>
+  <!-- Fork 1 -> 2A (Left Cyan) & 2B (Right Amber) -->
+  <path d="M 320 384 L 320 426" fill="none" stroke="#38BDF8" stroke-width="2.5" marker-end="url(#arr-cyan)"/>
+  <text x="308" y="410" text-anchor="end" class="el" fill="#38BDF8">Casual conversation</text>
 
-  <!-- STEP 2A: PRIMARY ENGINE — LIVE 3.8 (CYAN) -->
-  <g transform="translate(90, 410)">
-    <rect width="356" height="212" rx="14" fill="#0E2235" stroke="#38BDF8" stroke-width="2.4"/>
-    <text x="16" y="24" class="step" fill="#38BDF8">STEP 2 · PRIMARY ENGINE (CYAN BADGE)</text>
-    <rect x="254" y="10" width="88" height="20" rx="10" fill="#091826" stroke="#38BDF8" stroke-width="1"/>
-    <text x="298" y="24" text-anchor="middle" class="chip" fill="#38BDF8">LIVE 3.8 · FREE</text>
-    <text x="16" y="49" class="h">Gemini 3.8 Live (Native Audio Streaming)</text>
-    <text x="16" y="72" class="p">1. Bypasses local Whisper &amp; local TTS</text>
-    <text x="16" y="93" class="p">2. Streams 100 ms PCM chunks over v1beta WS</text>
-    <text x="16" y="111" class="p">   with manual activity_start / activity_end</text>
-    <text x="16" y="132" class="p">3. First audio byte starts HTTP/1.1 chunked</text>
-    <text x="16" y="150" class="p">   /live/ stream on dedicated port → ESP32 I2S</text>
-    <text x="16" y="177" class="m">• Native voice (Puck) · TTFA ~0.8–2.5s · 0 IDE quota</text>
-    <text x="16" y="196" class="m">• Escalates via escalate_to_engineer() tool call</text>
+  <path d="M 600 384 L 600 426" fill="none" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arr-amber)"/>
+  <text x="612" y="410" text-anchor="start" class="el" fill="#FBBF24">escalate_to_engineer()</text>
+
+  <!-- STEP 2A: CASUAL PATH (LEFT CYAN) -->
+  <g transform="translate(100, 432)">
+    <rect width="340" height="164" rx="14" fill="#0E2235" stroke="#38BDF8" stroke-width="2.2"/>
+    <text x="16" y="24" class="step" fill="#38BDF8">2A · CASUAL PATH (LEFT AVATAR)</text>
+    <text x="16" y="49" class="h">Direct ESP32 ↔ Google WSS</text>
+    <text x="16" y="73" class="p">• 100% handled on ESP32-S3</text>
+    <text x="16" y="94" class="p">• Lowest latency (no PC audio hop)</text>
+    <text x="16" y="115" class="p">• Native voice (Charon / 8 presets)</text>
+    <text x="16" y="136" class="p">• Live captions in bottom subtitle box</text>
+    <text x="16" y="154" class="m">0 Antigravity tokens · 0 PC CPU</text>
   </g>
 
-  <!-- Automatic Fallback Arrow 2A -> 2B (Dashed Green) -->
-  <line x1="446" y1="516" x2="498" y2="516" stroke="#34D399" stroke-width="2.4" stroke-dasharray="5,4" marker-end="url(#arr-green)"/>
-  <text x="472" y="502" text-anchor="middle" class="chip" fill="#34D399">ON ERROR</text>
-  <text x="472" y="534" text-anchor="middle" class="chip" fill="#34D399">AUTO</text>
-
-  <!-- STEP 2B: AUTOMATIC FALLBACK — FREE 3.5 LITE (GREEN) -->
-  <g transform="translate(504, 410)">
-    <rect width="326" height="212" rx="14" fill="#112624" stroke="#34D399" stroke-width="2" stroke-dasharray="6,3"/>
-    <text x="16" y="24" class="step" fill="#34D399">AUTO-FALLBACK (GREEN BADGE)</text>
-    <rect x="220" y="10" width="92" height="20" rx="10" fill="#0B1F1C" stroke="#34D399" stroke-width="1"/>
-    <text x="266" y="24" text-anchor="middle" class="chip" fill="#34D399">FREE 3.5 LITE</text>
-    <text x="16" y="49" class="h">stackchan_chat.py (Backup)</text>
-    <text x="16" y="72" class="p">• Triggers automatically if Live WS</text>
-    <text x="16" y="90" class="p">  fails, disconnects, or hits quota</text>
-    <text x="16" y="113" class="p">1. Local Faster-Whisper (OS lang)</text>
-    <text x="16" y="132" class="p">2. Gemini 3.5 Flash-Lite Interactions</text>
-    <text x="16" y="151" class="p">3. Local Piper / Edge TTS WAV</text>
-    <text x="16" y="177" class="m">• Same 0 IDE quota · same behavior</text>
-    <text x="16" y="196" class="m">• Escalates via ESCALATE_TO_ENGINEER:</text>
+  <!-- STEP 2B: HANDOFF & AGENT PATH (RIGHT AMBER) -->
+  <g transform="translate(480, 432)">
+    <rect width="340" height="164" rx="14" fill="#2A1E10" stroke="#FBBF24" stroke-width="2.2"/>
+    <text x="16" y="24" class="step" fill="#FBBF24">2B · ESCALATION (LEFT → RIGHT AVATAR)</text>
+    <text x="16" y="49" class="h">Sequenced Handoff → Antigravity</text>
+    <text x="16" y="73" class="p">1. Charon (Left) says "Paso la orden..."</text>
+    <text x="16" y="94" class="p">2. After 120ms I2S drain → AGENT $ lit</text>
+    <text x="16" y="115" class="p">3. Antigravity runs code, git, build, web</text>
+    <text x="16" y="136" class="p">4. --wait-reply uses robot transcription</text>
+    <text x="16" y="154" class="m">PC speaks via Edge TTS GonzaloNeural</text>
   </g>
 
-  <!-- Escalation Arrows from Both Engines -> Step 3 (Amber) -->
-  <path d="M 350 622 L 350 662 L 418 662 L 418 690" fill="none" stroke="#FBBF24" stroke-width="2.4" marker-end="url(#arr-amber)"/>
-  <path d="M 590 622 L 590 662 L 502 662 L 502 690" fill="none" stroke="#FBBF24" stroke-width="2.2" stroke-dasharray="5,3" marker-end="url(#arr-amber)"/>
-  <text x="460" y="652" text-anchor="middle" class="el" fill="#FBBF24">Technical / Code / Git / Flash / Live Web Escalation</text>
+  <!-- Converge 2A & 2B -> Step 3 (clean outer paths, zero crossing!) -->
+  <path d="M 270 596 L 270 644 L 380 644 L 380 676" fill="none" stroke="#38BDF8" stroke-width="2.4" marker-end="url(#arr-cyan)"/>
+  <path d="M 650 596 L 650 644 L 540 644 L 540 676" fill="none" stroke="#FBBF24" stroke-width="2.4" marker-end="url(#arr-amber)"/>
+  <text x="662" y="638" class="m" fill="#FBBF24">POST /play (WAV + subtitle) + --context</text>
 
-  <!-- STEP 3: CODING AGENT PATH (AMBER) — cleanly framed between x=140 and x=780 -->
-  <g transform="translate(140, 696)">
-    <rect width="640" height="126" rx="14" fill="#2A1E10" stroke="#FBBF24" stroke-width="2.2"/>
-    <text x="18" y="25" class="step" fill="#FBBF24">STEP 3 · CODING AGENT PATH (RIGHT AVATAR · AMBER BADGE)</text>
-    <rect x="526" y="11" width="96" height="20" rx="10" fill="#1F150A" stroke="#FBBF24" stroke-width="1"/>
-    <text x="574" y="25" text-anchor="middle" class="chip" fill="#FBBF24">AGENT $</text>
-    <text x="18" y="51" class="h">Antigravity / MCP Lead Engineer</text>
-    <text x="18" y="74" class="p">• Executes repo edits, ESP-IDF builds, USB COM3 flashes, camera/sensor checks &amp; web search</text>
-    <text x="18" y="95" class="p">• Robot lights up right AGENT $ avatar (WAITING, mic OFF) while tools run</text>
-    <text x="18" y="114" class="m">• Speaks summary via stackchan_say (or --wait-reply), then resumes LIVE 3.8 with --context</text>
+  <!-- STEP 3: UNIFIED PLAYBACK & SUBTITLES -->
+  <g transform="translate(140, 682)">
+    <rect width="640" height="106" rx="14" fill="#142038" stroke="#60A5FA" stroke-width="2"/>
+    <text x="18" y="24" class="step" fill="#60A5FA">STEP 3 · UNIFIED I2S PLAYBACK, MOTION &amp; LIVE CAPTIONS</text>
+    <text x="18" y="49" class="h">PSRAM PCM Ring Buffer + Bottom Subtitle Box (Both Avatars)</text>
+    <text x="18" y="71" class="p">• Plays native Gemini Live 24 kHz PCM or PC HTTP WAV (GonzaloNeural at 1.0x pitch)</text>
+    <text x="18" y="92" class="p">• 120 ms silence flush prevents clipped endings · returns cleanly to LIVE standby</text>
   </g>
 
-  <!-- Outer Bypass Channels (ZERO intersection with Step 3: x=106 left, x=814 right) -->
-  <path d="M 106 622 L 106 866 Q 106 876 116 876 L 280 876 L 280 906" fill="none" stroke="#38BDF8" stroke-width="2.4" marker-end="url(#arr-cyan)"/>
-  <text transform="translate(94, 756) rotate(-90)" text-anchor="middle" class="el" fill="#38BDF8">Live Stream (Casual)</text>
+  <!-- Arrow 3 -> 4 (Auto-Detach) -->
+  <line x1="460" y1="788" x2="460" y2="838" stroke="#C77DFF" stroke-width="2.4" stroke-dasharray="5,4" marker-end="url(#arr-purp)"/>
+  <text x="472" y="818" class="el" fill="#C77DFF">Say "terminamos" / close /stackchanchat / lease expires (25s)</text>
 
-  <path d="M 814 622 L 814 866 Q 814 876 804 876 L 640 876 L 640 906" fill="none" stroke="#34D399" stroke-width="2.2" stroke-dasharray="5,3" marker-end="url(#arr-green)"/>
-  <text transform="translate(828, 756) rotate(90)" text-anchor="middle" class="el" fill="#34D399">Fallback WAV (Casual)</text>
-
-  <!-- Center Escalation Output Arrow: Step 3 -> Step 4 -->
-  <line x1="460" y1="822" x2="460" y2="906" stroke="#FBBF24" stroke-width="2.4" marker-end="url(#arr-amber)"/>
-  <text x="472" y="858" class="m" fill="#FBBF24">+ --context handoff</text>
-
-  <!-- STEP 4: ROBOT PLAYBACK & LOOP -->
-  <g transform="translate(140, 912)">
-    <rect width="640" height="102" rx="14" fill="#142038" stroke="#60A5FA" stroke-width="2"/>
-    <text x="18" y="25" class="step" fill="#60A5FA">STEP 4 · STACKCHAN PLAYBACK &amp; CONTINUOUS STANDBY</text>
-    <text x="18" y="50" class="h">ESP32-S3 I2S Speaker (Live Chunked Stream or Fallback WAV) + Head Motion</text>
-    <text x="18" y="73" class="p">• Plays 24 kHz audio immediately with lip-sync &amp; gentle servo motion</text>
-    <text x="18" y="92" class="p">• Returns to silent standby (POST /listen/resume) ready for the next hands-free voice turn</text>
+  <!-- STEP 4: AUTO-DETACH -->
+  <g transform="translate(140, 844)">
+    <rect width="640" height="86" rx="14" fill="#1B1330" stroke="#C77DFF" stroke-width="2" stroke-dasharray="6,3"/>
+    <text x="18" y="24" class="step" fill="#C77DFF">STEP 4 · AUTO-DETACH BACK TO STANDALONE</text>
+    <text x="18" y="48" class="h">Seamless Return to 1-Avatar Standalone GEMINI</text>
+    <text x="18" y="69" class="p">• Screen collapses back to 1 big avatar · robot keeps working anywhere without a PC</text>
   </g>
 
-  <!-- Clean Return Loop along Far Left Margin (x=42, well clear of x=106 bypass): Step 4 -> Step 1 -->
-  <path d="M 140 963 L 52 963 Q 42 963 42 953 L 42 323 Q 42 313 52 313 L 134 313" fill="none" stroke="#60A5FA" stroke-width="2.4" stroke-dasharray="6,4" marker-end="url(#arr-blue)"/>
-  <text transform="translate(26, 638) rotate(-90)" text-anchor="middle" class="el" fill="#60A5FA">NEXT VOICE TURN · SILENT STANDBY</text>
+  <!-- Clean Return Loop along Far Left Margin: Step 3 -> Step 1 -->
+  <path d="M 140 735 L 48 735 Q 38 735 38 725 L 38 342 Q 38 332 48 332 L 134 332" fill="none" stroke="#60A5FA" stroke-width="2.4" stroke-dasharray="6,4" marker-end="url(#arr-blue)"/>
+  <text transform="translate(24, 534) rotate(-90)" text-anchor="middle" class="el" fill="#60A5FA">NEXT VOICE TURN · HANDS-FREE STANDBY</text>
 
   <!-- Footer -->
-  <text x="460" y="1062" text-anchor="middle" class="foot">Default /stackchanchat = LIVE 3.8 (Cyan)  →  Auto-Fallback = FREE 3.5 LITE (Green)  →  Escalation = AGENT $ (Amber)</text>
-  <text x="460" y="1086" text-anchor="middle" class="m">Say "terminamos" / "end chat" anytime → StackChan returns to IDLE (mic OFF)</text>
+  <text x="460" y="984" text-anchor="middle" class="foot">One flagship app: GEMINI standalone (Purple) ↔ Auto-Attach LIVE + MCP (Cyan) ↔ Escalation AGENT $ (Amber)</text>
+  <text x="460" y="1008" text-anchor="middle" class="m">Zero Whisper on PC · Zero GEMINI_API_KEY on PC · Legacy AppMcp kept intact as reference</text>
 </svg>

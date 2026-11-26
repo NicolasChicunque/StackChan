@@ -1646,6 +1646,11 @@ void AppGemini::spk_task_loop()
                 if (_server_turn_done.load() ||
                     static_cast<SessionState>(_state.load()) != SessionState::Speaking) {
                     if (codec) {
+                        // Flush 120 ms of silence through I2S DMA so the final syllable never clips
+                        std::fill(chunk.begin(), chunk.end(), 0);
+                        for (int z = 0; z < 6; ++z) {
+                            codec->OutputData(chunk);
+                        }
                         codec->EnableOutput(false);
                     }
                     output_active = false;
