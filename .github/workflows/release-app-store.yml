@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. store-v1.0.0)"
+        description: "Release tag (e.g. store-v1.2.0)"
         required: true
-        default: "store-v1.0.0"
-      store_ref:
-        description: "Branch/ref containing Custom App Store support"
+        default: "store-v1.2.0"
+      source_ref:
+        description: "Branch/ref to build all modular apps from"
         required: false
-        default: "feat/custom-app-store"
+        default: "feat/community-suite"
 
 permissions:
   contents: write
@@ -30,47 +30,38 @@ jobs:
         app:
           - id: community-suite
             name: Community Suite
-            branch: feat/community-suite
+            cmake_flags: "-DSTACKCHAN_ENABLE_APP_MUSIC=ON -DSTACKCHAN_ENABLE_APP_ALARM=ON -DSTACKCHAN_ENABLE_APP_GEMINI=ON -DSTACKCHAN_ENABLE_APP_MCP=ON"
           - id: music
             name: Music Player
-            branch: feat/music-player
+            cmake_flags: "-DSTACKCHAN_ENABLE_APP_MUSIC=ON -DSTACKCHAN_ENABLE_APP_ALARM=OFF -DSTACKCHAN_ENABLE_APP_GEMINI=OFF -DSTACKCHAN_ENABLE_APP_MCP=OFF"
           - id: alarm
             name: Alarm Clock
-            branch: feat/alarm-clock
+            cmake_flags: "-DSTACKCHAN_ENABLE_APP_MUSIC=OFF -DSTACKCHAN_ENABLE_APP_ALARM=ON -DSTACKCHAN_ENABLE_APP_GEMINI=OFF -DSTACKCHAN_ENABLE_APP_MCP=OFF"
           - id: gemini
             name: Gemini Live
-            branch: feat/gemini-live
+            cmake_flags: "-DSTACKCHAN_ENABLE_APP_MUSIC=OFF -DSTACKCHAN_ENABLE_APP_ALARM=OFF -DSTACKCHAN_ENABLE_APP_GEMINI=ON -DSTACKCHAN_ENABLE_APP_MCP=OFF"
           - id: mcp
             name: MCP Bridge
-            branch: feat/mcp-bridge
+            cmake_flags: "-DSTACKCHAN_ENABLE_APP_MUSIC=OFF -DSTACKCHAN_ENABLE_APP_ALARM=OFF -DSTACKCHAN_ENABLE_APP_GEMINI=OFF -DSTACKCHAN_ENABLE_APP_MCP=ON"
 
     steps:
-      - name: Checkout app branch
+      - name: Checkout modular codebase
         uses: actions/checkout@v4
         with:
-          ref: ${{ matrix.app.branch }}
+          ref: ${{ github.event.inputs.source_ref || 'feat/community-suite' }}
           fetch-depth: 0
           submodules: recursive
-
-      - name: Include Custom App Store in build
-        env:
-          STORE_REF: ${{ github.event.inputs.store_ref || 'feat/custom-app-store' }}
-        run: |
-          git config --global --add safe.directory "*"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "${STORE_REF}"
-          git merge --no-edit FETCH_HEAD
 
       - name: Build ESP32-S3 firmware
         shell: bash
         working-directory: firmware
         run: |
+          git config --global --add safe.directory "*"
           . /opt/esp/idf/export.sh
           python3 ./fetch_repos.py
           printf "CONFIG_LV_FONT_MONTSERRAT_12=y\nCONFIG_LV_FONT_MONTSERRAT_14=y\n" > sdkconfig.defaults.local
           idf.py set-target esp32s3
-          idf.py build
+          idf.py ${{ matrix.app.cmake_flags }} build
           idf.py merge-bin -o "stackchan-${{ matrix.app.id }}-merged.bin"
           cp build/stack-chan.bin "build/stackchan-${{ matrix.app.id }}-ota.bin"
           ls -lh "build/stackchan-${{ matrix.app.id }}-ota.bin" "build/stackchan-${{ matrix.app.id }}-merged.bin"
