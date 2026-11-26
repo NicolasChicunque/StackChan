@@ -11,9 +11,19 @@ This fork adds a native **MicroSD Music Player + Internet Radio + Web Remote (`M
 
 > **Quick start**: Format a microSD card as FAT32, copy your `.mp3` or `.wav` files to the card, insert it into CoreS3, build & flash `firmware/` with ESP-IDF v6.1 (see [firmware/README.md](firmware/README.md)), and open **MUSIC** from the launcher.
 
-### Personal Branch Customization (`custom/naruto`)
+### Community Suite, Custom App Store & MicroSD Layout
 
-This branch combines `feat/music-player`, `feat/music-wifi`, and `feat/gemini-live`, and adds a custom 7-state Naruto pixel-art sprite set (`Calm`, `Thinking`, `Happy`, `Sleepy`, `Shy`, `Smug`, `Pouty`) cached in PSRAM for smooth voice playback, with a live NVS-persisted **Classic / Naruto** avatar toggle in both `SETUP -> Device -> Avatar` and `MUSIC -> Settings` (synced across `AI.AGENT`, `GEMINI`, and `MUSIC`).
+This public `feat/community-suite` branch combines all custom apps (`MUSIC` + Internet Radio + Web/QR Remote, `ALARM` + Timer/Stopwatch, `GEMINI`, `MCP`), the unified top status bar (**Home** + info + **`[- VOL +]`**), and a **Custom Community App Store** inside `APP.CENTER` (with a **Community / Official** toggle for Wi-Fi HTTPS OTA updates, plus `*-merged.bin` builds in [GitHub Releases](https://github.com/NicolasChicunque/StackChan/releases) ready for M5Burner).
+
+#### MicroSD Card Layout (FAT32, mounted at `/sd`)
+
+| Path on MicroSD | Purpose |
+| --- | --- |
+| `/sd/avatars/avatar_*.bin` | Optional custom LVGL v9 character sprites (loaded into PSRAM; falls back to the classic StackChan face if omitted). Enable via `SETUP -> Device -> Avatar -> Custom`. Full guide & conversion steps: [docs/CUSTOM_AVATARS.md](docs/CUSTOM_AVATARS.md). |
+| `/sd/music/` *(or `/sd/`)* | `.mp3` and `.wav` files for **MUSIC** and **ALARM** ringtones (recursive scan up to 3 levels deep). |
+| `/sd/radio.txt` | Optional custom Internet Radio stations (`Name|StreamURL`, one per line). |
+| `/sd/gemini.txt` | Google AI Studio API key for **GEMINI** (auto-cached to NVS; optional line 2: model ID, line 3: voice). |
+| `/sd/store.txt` | Optional custom JSON catalog URL override for **APP.CENTER** Community Store. |
 
 ----
 
