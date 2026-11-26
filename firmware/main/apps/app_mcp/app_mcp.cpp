@@ -229,7 +229,8 @@ void AppMcp::onOpen()
     _explicit_motion_until = 0;
     _base_yaw_deg        = 0;
     _base_pitch_deg      = Y_HOME_DEG;
-    _shown_naruto_idx    = -1;
+    _shown_naruto_idx[0] = -1;
+    _shown_naruto_idx[1] = -1;
 
     // Load saved speaker volume, auto mode, silence pause, mic sensitivity & speak motion
     {
@@ -1566,59 +1567,68 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    // Naruto avatar image (scaled from 180x180 -> fits stage cleanly)
-    _avatar_img = lv_image_create(_stage);
-    if (_naruto_imgs[0].data != nullptr) {
-        lv_image_set_src(_avatar_img, &_naruto_imgs[0]);
-        lv_image_set_scale(_avatar_img, is_fix ? 156 : 176);
+    // Dual side-by-side avatar slots: Left = FREE (Flash-Lite), Right = AGENT $ (Coding Agent)
+    // Supports both Naruto sprites (custom/naruto) and classic StackChan face fallback (public)
+    const int slot_w       = 138;
+    const int slot_h       = stage_h - 32;
+    const int slot_x[2]    = {8, 158};
+    const char* slot_txt[2] = {"FREE", "AGENT $"};
+    const int naruto_scale = is_fix ? 104 : 114;
+
+    for (int i = 0; i < 2; ++i) {
+        _slot_card[i] = lv_obj_create(_stage);
+        lv_obj_set_pos(_slot_card[i], slot_x[i], 6);
+        lv_obj_set_size(_slot_card[i], slot_w, slot_h);
+        style_box(_slot_card[i], 0x0F172A, 12);
+        lv_obj_set_style_border_width(_slot_card[i], 1, 0);
+        lv_obj_set_style_border_color(_slot_card[i], lv_color_hex(0x24314F), 0);
+        lv_obj_remove_flag(_slot_card[i], LV_OBJ_FLAG_CLICKABLE);
+
+        _slot_dot[i] = lv_obj_create(_slot_card[i]);
+        lv_obj_set_size(_slot_dot[i], 7, 7);
+        lv_obj_set_pos(_slot_dot[i], 8, 8);
+        style_box(_slot_dot[i], 0x64748B, LV_RADIUS_CIRCLE);
+        lv_obj_remove_flag(_slot_dot[i], LV_OBJ_FLAG_CLICKABLE);
+
+        _slot_lbl[i] = lv_label_create(_slot_card[i]);
+        lv_obj_set_pos(_slot_lbl[i], 19, 5);
+        lv_obj_set_style_text_font(_slot_lbl[i], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(0x94A3B8), 0);
+        lv_label_set_text(_slot_lbl[i], slot_txt[i]);
+
+        // Naruto avatar image (scaled cleanly inside slot)
+        _avatar_img[i] = lv_image_create(_slot_card[i]);
+        if (_naruto_imgs[0].data != nullptr) {
+            lv_image_set_src(_avatar_img[i], &_naruto_imgs[0]);
+            lv_image_set_scale(_avatar_img[i], naruto_scale);
+        }
+        lv_obj_align(_avatar_img[i], LV_ALIGN_CENTER, 0, 8);
+        lv_obj_remove_flag(_avatar_img[i], LV_OBJ_FLAG_CLICKABLE);
+
+        // Classic StackChan face fallback (used when Naruto sprites are not active/present)
+        _face_card[i] = lv_obj_create(_slot_card[i]);
+        lv_obj_set_size(_face_card[i], 96, is_fix ? 56 : 62);
+        lv_obj_align(_face_card[i], LV_ALIGN_CENTER, 0, 9);
+        style_box(_face_card[i], COL_BG, 12);
+        lv_obj_set_style_border_width(_face_card[i], 2, 0);
+        lv_obj_set_style_border_color(_face_card[i], lv_color_hex(0x24314F), 0);
+        lv_obj_remove_flag(_face_card[i], LV_OBJ_FLAG_CLICKABLE);
+
+        _face_eye_l[i] = lv_obj_create(_face_card[i]);
+        lv_obj_set_size(_face_eye_l[i], 14, 14);
+        lv_obj_align(_face_eye_l[i], LV_ALIGN_CENTER, -20, -6);
+        style_box(_face_eye_l[i], COL_WHITE, LV_RADIUS_CIRCLE);
+
+        _face_eye_r[i] = lv_obj_create(_face_card[i]);
+        lv_obj_set_size(_face_eye_r[i], 14, 14);
+        lv_obj_align(_face_eye_r[i], LV_ALIGN_CENTER, 20, -6);
+        style_box(_face_eye_r[i], COL_WHITE, LV_RADIUS_CIRCLE);
+
+        _face_mouth[i] = lv_obj_create(_face_card[i]);
+        lv_obj_set_size(_face_mouth[i], 28, 5);
+        lv_obj_align(_face_mouth[i], LV_ALIGN_CENTER, 0, 14);
+        style_box(_face_mouth[i], COL_WHITE, 3);
     }
-    lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, -10);
-    lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
-
-    // Operating mode pill badge (top-right of stage, beside Naruto's face)
-    _mode_badge = lv_obj_create(_stage);
-    lv_obj_set_size(_mode_badge, 86, 22);
-    lv_obj_align(_mode_badge, LV_ALIGN_TOP_RIGHT, -6, 6);
-    style_box(_mode_badge, 0x162033, 11);
-    lv_obj_set_style_border_width(_mode_badge, 1, 0);
-    lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0x334155), 0);
-    lv_obj_remove_flag(_mode_badge, LV_OBJ_FLAG_CLICKABLE);
-
-    _mode_dot = lv_obj_create(_mode_badge);
-    lv_obj_set_size(_mode_dot, 7, 7);
-    lv_obj_align(_mode_dot, LV_ALIGN_LEFT_MID, 7, 0);
-    style_box(_mode_dot, 0x64748B, LV_RADIUS_CIRCLE);
-    lv_obj_remove_flag(_mode_dot, LV_OBJ_FLAG_CLICKABLE);
-
-    _lbl_mode = lv_label_create(_mode_badge);
-    lv_obj_align(_lbl_mode, LV_ALIGN_LEFT_MID, 18, 0);
-    lv_obj_set_style_text_font(_lbl_mode, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0x94A3B8), 0);
-    lv_label_set_text(_lbl_mode, "IDLE");
-
-    // Classic StackChan face fallback
-    _face_card = lv_obj_create(_stage);
-    lv_obj_set_size(_face_card, 120, is_fix ? 76 : 86);
-    lv_obj_align(_face_card, LV_ALIGN_CENTER, 0, -10);
-    style_box(_face_card, COL_BG, 14);
-    lv_obj_set_style_border_width(_face_card, 2, 0);
-    lv_obj_set_style_border_color(_face_card, lv_color_hex(COL_TEAL_DK), 0);
-    lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_CLICKABLE);
-
-    _face_eye_l = lv_obj_create(_face_card);
-    lv_obj_set_size(_face_eye_l, 18, 18);
-    lv_obj_align(_face_eye_l, LV_ALIGN_CENTER, -26, -8);
-    style_box(_face_eye_l, COL_WHITE, LV_RADIUS_CIRCLE);
-
-    _face_eye_r = lv_obj_create(_face_card);
-    lv_obj_set_size(_face_eye_r, 18, 18);
-    lv_obj_align(_face_eye_r, LV_ALIGN_CENTER, 26, -8);
-    style_box(_face_eye_r, COL_WHITE, LV_RADIUS_CIRCLE);
-
-    _face_mouth = lv_obj_create(_face_card);
-    lv_obj_set_size(_face_mouth, 38, 6);
-    lv_obj_align(_face_mouth, LV_ALIGN_CENTER, 0, 18);
-    style_box(_face_mouth, COL_WHITE, 4);
 
     // Status line + live mic/speak meter at bottom of stage
     _lbl_status = lv_label_create(_stage);
@@ -1897,9 +1907,16 @@ void AppMcp::destroy_ui()
         }
         lv_obj_delete(_root);
         _root           = nullptr;
-        _mode_badge     = nullptr;
-        _mode_dot       = nullptr;
-        _lbl_mode       = nullptr;
+        for (int i = 0; i < 2; ++i) {
+            _slot_card[i]  = nullptr;
+            _slot_dot[i]   = nullptr;
+            _slot_lbl[i]   = nullptr;
+            _avatar_img[i] = nullptr;
+            _face_card[i]  = nullptr;
+            _face_eye_l[i] = nullptr;
+            _face_eye_r[i] = nullptr;
+            _face_mouth[i] = nullptr;
+        }
         _snap_panel     = nullptr;
         _snap_view      = nullptr;
         _snap_hide_ms   = 0;
@@ -1964,30 +1981,31 @@ void AppMcp::refresh_ui(uint32_t now)
 
     lv_label_set_text(_lbl_status, st.c_str());
 
-    if (_mode_badge && _mode_dot && _lbl_mode && _stage) {
-        const auto amode = static_cast<AgentMode>(_agent_mode.load());
-        if (amode == AgentMode::Free) {
-            lv_obj_set_style_bg_color(_mode_badge, lv_color_hex(0x112624), 0);
-            lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0x34D399), 0);
-            lv_obj_set_style_bg_color(_mode_dot, lv_color_hex(0x34D399), 0);
-            lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0x34D399), 0);
-            lv_label_set_text(_lbl_mode, "FREE");
-            lv_obj_set_style_border_color(_stage, lv_color_hex(0x1F6E58), 0);
-        } else if (amode == AgentMode::Engineer) {
-            lv_obj_set_style_bg_color(_mode_badge, lv_color_hex(0x2A1E10), 0);
-            lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0xFBBF24), 0);
-            lv_obj_set_style_bg_color(_mode_dot, lv_color_hex(0xFBBF24), 0);
-            lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0xFBBF24), 0);
-            lv_label_set_text(_lbl_mode, "AGENT $");
-            lv_obj_set_style_border_color(_stage, lv_color_hex(0xB45309), 0);
-        } else {
-            lv_obj_set_style_bg_color(_mode_badge, lv_color_hex(0x162033), 0);
-            lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0x334155), 0);
-            lv_obj_set_style_bg_color(_mode_dot, lv_color_hex(0x64748B), 0);
-            lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0x94A3B8), 0);
-            lv_label_set_text(_lbl_mode, "IDLE");
-            lv_obj_set_style_border_color(_stage, lv_color_hex(COL_CARD_HI), 0);
+    if (_slot_card[0] && _slot_card[1] && _stage) {
+        const auto amode      = static_cast<AgentMode>(_agent_mode.load());
+        const bool free_on    = (amode == AgentMode::Free);
+        const bool agent_on   = (amode == AgentMode::Engineer);
+        const uint32_t bg[2]  = {free_on ? 0x112624U : 0x0F172AU, agent_on ? 0x2A1E10U : 0x0F172AU};
+        const uint32_t brd[2] = {free_on ? 0x34D399U : 0x24314FU, agent_on ? 0xFBBF24U : 0x24314FU};
+        const uint32_t txt[2] = {free_on ? 0x34D399U : 0x64748BU, agent_on ? 0xFBBF24U : 0x64748BU};
+        const int bw[2]       = {free_on ? 2 : 1, agent_on ? 2 : 1};
+        const lv_opa_t opa[2] = {
+            free_on ? LV_OPA_COVER : (agent_on ? LV_OPA_40 : LV_OPA_50),
+            agent_on ? LV_OPA_COVER : (free_on ? LV_OPA_40 : LV_OPA_50),
+        };
+        for (int i = 0; i < 2; ++i) {
+            lv_obj_set_style_bg_color(_slot_card[i], lv_color_hex(bg[i]), 0);
+            lv_obj_set_style_border_color(_slot_card[i], lv_color_hex(brd[i]), 0);
+            lv_obj_set_style_border_width(_slot_card[i], bw[i], 0);
+            lv_obj_set_style_opa(_slot_card[i], opa[i], 0);
+            lv_obj_set_style_bg_color(_slot_dot[i], lv_color_hex(txt[i]), 0);
+            lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(txt[i]), 0);
+            if (_face_card[i]) {
+                lv_obj_set_style_border_color(_face_card[i], lv_color_hex(brd[i]), 0);
+            }
         }
+        lv_obj_set_style_border_color(
+            _stage, lv_color_hex(free_on ? 0x1F6E58U : (agent_on ? 0xB45309U : COL_CARD_HI)), 0);
     }
 
     if (_btn_auto && _lbl_auto) {
@@ -2037,45 +2055,50 @@ void AppMcp::refresh_ui(uint32_t now)
 
 void AppMcp::refresh_avatar_anim(uint32_t now)
 {
-    if (!_stage) {
+    if (!_stage || !_slot_card[0] || !_slot_card[1]) {
         return;
     }
-    bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-                       _naruto_imgs[0].data != nullptr);
-    bool speaking   = _playing.load();
-    int face_idx    = std::clamp(_face.load(), 0, static_cast<int>(FaceExpr::Count) - 1);
+    bool use_naruto  = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
+                        _naruto_imgs[0].data != nullptr);
+    bool speaking    = _playing.load();
+    int face_idx     = std::clamp(_face.load(), 0, static_cast<int>(FaceExpr::Count) - 1);
+    const auto amode = static_cast<AgentMode>(_agent_mode.load());
+    const int active = (amode == AgentMode::Free) ? 0 : (amode == AgentMode::Engineer ? 1 : -1);
 
-    if (use_naruto) {
-        lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < 2; ++i) {
+        const bool is_active = (i == active);
+        if (use_naruto) {
+            lv_obj_add_flag(_face_card[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(_avatar_img[i], LV_OBJ_FLAG_HIDDEN);
 
-        int show_idx = face_idx;
-        if (speaking && _speak_rms.load() > 600 && ((now / 180) % 2 == 0)) {
-            show_idx = static_cast<int>(FaceExpr::Happy);
-        }
-        if (_naruto_imgs[show_idx].data == nullptr) {
-            show_idx = 0;
-        }
-        if (show_idx != _shown_naruto_idx) {
-            lv_image_set_src(_avatar_img, &_naruto_imgs[show_idx]);
-            _shown_naruto_idx = show_idx;
-        }
-        int dy = speaking ? static_cast<int>(std::sin(now * 0.02f) * 3.0f) : 0;
-        lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, -10 + dy);
-    } else {
-        lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
-
-        bool blink = ((now % 4200) < 150);
-        lv_obj_set_size(_face_eye_l, 18, blink ? 4 : 18);
-        lv_obj_set_size(_face_eye_r, 18, blink ? 4 : 18);
-        if (speaking) {
-            int mh = 6 + std::clamp(_speak_rms.load() / 220, 0, 14);
-            lv_obj_set_size(_face_mouth, 34, mh);
-            lv_obj_set_style_radius(_face_mouth, (mh > 10) ? 8 : 4, 0);
+            int show_idx = is_active ? face_idx : static_cast<int>(FaceExpr::Calm);
+            if (is_active && speaking && _speak_rms.load() > 600 && ((now / 180) % 2 == 0)) {
+                show_idx = static_cast<int>(FaceExpr::Happy);
+            }
+            if (_naruto_imgs[show_idx].data == nullptr) {
+                show_idx = 0;
+            }
+            if (show_idx != _shown_naruto_idx[i]) {
+                lv_image_set_src(_avatar_img[i], &_naruto_imgs[show_idx]);
+                _shown_naruto_idx[i] = show_idx;
+            }
+            int dy = (is_active && speaking) ? static_cast<int>(std::sin(now * 0.02f) * 2.5f) : 0;
+            lv_obj_align(_avatar_img[i], LV_ALIGN_CENTER, 0, 8 + dy);
         } else {
-            lv_obj_set_size(_face_mouth, 38, 6);
-            lv_obj_set_style_radius(_face_mouth, 4, 0);
+            lv_obj_add_flag(_avatar_img[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(_face_card[i], LV_OBJ_FLAG_HIDDEN);
+
+            bool blink = is_active && ((now % 4200) < 150);
+            lv_obj_set_size(_face_eye_l[i], 14, blink ? 3 : 14);
+            lv_obj_set_size(_face_eye_r[i], 14, blink ? 3 : 14);
+            if (is_active && speaking) {
+                int mh = 5 + std::clamp(_speak_rms.load() / 240, 0, 12);
+                lv_obj_set_size(_face_mouth[i], 26, mh);
+                lv_obj_set_style_radius(_face_mouth[i], (mh > 9) ? 6 : 3, 0);
+            } else {
+                lv_obj_set_size(_face_mouth[i], 28, 5);
+                lv_obj_set_style_radius(_face_mouth[i], 3, 0);
+            }
         }
     }
 }

@@ -172,21 +172,21 @@ private:
 
     // Cached 7-state Naruto expressions
     lv_image_dsc_t _naruto_imgs[static_cast<int>(FaceExpr::Count)] = {};
-    int _shown_naruto_idx = -1;
+    int _shown_naruto_idx[2] = {-1, -1};
 
     /* --------------------------- LVGL Widgets ----------------------------- */
     lv_obj_t* _root         = nullptr;
     lv_obj_t* _lbl_ip       = nullptr;
     lv_obj_t* _lbl_batt     = nullptr;
     lv_obj_t* _stage        = nullptr;
-    lv_obj_t* _mode_badge   = nullptr;
-    lv_obj_t* _mode_dot     = nullptr;
-    lv_obj_t* _lbl_mode     = nullptr;
-    lv_obj_t* _avatar_img   = nullptr;
-    lv_obj_t* _face_card    = nullptr;
-    lv_obj_t* _face_eye_l   = nullptr;
-    lv_obj_t* _face_eye_r   = nullptr;
-    lv_obj_t* _face_mouth   = nullptr;
+    lv_obj_t* _slot_card[2] = {nullptr, nullptr};
+    lv_obj_t* _slot_dot[2]  = {nullptr, nullptr};
+    lv_obj_t* _slot_lbl[2]  = {nullptr, nullptr};
+    lv_obj_t* _avatar_img[2] = {nullptr, nullptr};
+    lv_obj_t* _face_card[2]  = {nullptr, nullptr};
+    lv_obj_t* _face_eye_l[2] = {nullptr, nullptr};
+    lv_obj_t* _face_eye_r[2] = {nullptr, nullptr};
+    lv_obj_t* _face_mouth[2] = {nullptr, nullptr};
     lv_obj_t* _lbl_status   = nullptr;
     lv_obj_t* _bar_level_bg = nullptr;
     lv_obj_t* _bar_level    = nullptr;
