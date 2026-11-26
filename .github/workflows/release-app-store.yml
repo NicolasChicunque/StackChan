@@ -67,7 +67,7 @@ jobs:
           python3 ./fetch_repos.py
           idf.py set-target esp32s3
           idf.py build
-          idf.py merge-bin -o "build/stackchan-${{ matrix.app.id }}-merged.bin"
+          idf.py merge-bin -o "stackchan-${{ matrix.app.id }}-merged.bin"
           cp build/stack-chan.bin "build/stackchan-${{ matrix.app.id }}-ota.bin"
           ls -lh "build/stackchan-${{ matrix.app.id }}-ota.bin" "build/stackchan-${{ matrix.app.id }}-merged.bin"
 
