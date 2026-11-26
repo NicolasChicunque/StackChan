@@ -22,13 +22,13 @@ constexpr const char* kAvatarNvsKey = "style";
 std::atomic<int> s_cached_avatar_style{-1};
 
 constexpr const char* kNarutoAssetNames[7] = {
-    "naruto_calm.bin",     // 0: Neutral / Calm
-    "naruto_thinking.bin", // 1: Doubt / Thinking / Listening
-    "naruto_happy.bin",    // 2: Happy / Laughing
-    "naruto_sleepy.bin",   // 3: Sleepy
-    "naruto_shy.bin",      // 4: Sad / Shy
-    "naruto_smug.bin",     // 5: Smug / Speaking
-    "naruto_pouty.bin",    // 6: Angry / Pouty
+    "avatar_calm.bin",     // 0: Neutral / Calm
+    "avatar_thinking.bin", // 1: Doubt / Thinking / Listening
+    "avatar_happy.bin",    // 2: Happy / Laughing
+    "avatar_sleepy.bin",   // 3: Sleepy
+    "avatar_shy.bin",      // 4: Sad / Shy
+    "avatar_smug.bin",     // 5: Smug / Speaking
+    "avatar_pouty.bin",    // 6: Angry / Pouty
 };
 
 int emotion_to_sprite_idx(const Emotion& emotion)

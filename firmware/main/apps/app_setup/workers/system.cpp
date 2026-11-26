@@ -339,7 +339,7 @@ AvatarStyleWorker::AvatarStyleWorker()
     _label_title->align(LV_ALIGN_CENTER, 0, -82);
 
     _label_hint = std::make_unique<Label>(*_panel);
-    _label_hint->setText("Applies to AI.Agent & Music");
+    _label_hint->setText("Classic or Custom (/sd/avatars)");
     _label_hint->setTextFont(&lv_font_montserrat_14);
     _label_hint->setTextColor(lv_color_hex(0x5A558F));
     _label_hint->align(LV_ALIGN_CENTER, 0, -52);
@@ -360,7 +360,7 @@ AvatarStyleWorker::AvatarStyleWorker()
     _btn_naruto->align(LV_ALIGN_CENTER, 72, -2);
     _btn_naruto->setSize(132, 54);
     _btn_naruto->label().setTextFont(&lv_font_montserrat_20);
-    _btn_naruto->label().setText("Naruto");
+    _btn_naruto->label().setText("Custom");
     _btn_naruto->onClick().connect([this]() {
         _use_naruto = true;
         refresh_buttons();

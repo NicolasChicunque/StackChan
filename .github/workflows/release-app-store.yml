@@ -28,6 +28,9 @@ jobs:
       fail-fast: false
       matrix:
         app:
+          - id: community-suite
+            name: Community Suite
+            branch: feat/community-suite
           - id: music
             name: Music Player
             branch: feat/music-player

@@ -285,8 +285,8 @@ void AppGemini::onOpen()
     _volume = std::clamp(static_cast<int>(GetHAL().getSpeakerVolume()), 10, 100);
 
     // Load Naruto sprites for custom/naruto branch (respects global Classic/Naruto toggle)
-    _img_naruto_calm      = assets::get_image("naruto_calm_music.bin");
-    _img_naruto_happy     = assets::get_image("naruto_happy_music.bin");
+    _img_naruto_calm      = assets::get_image("avatar_calm_music.bin");
+    _img_naruto_happy     = assets::get_image("avatar_happy_music.bin");
     _avatar_showing_happy = false;
 
     // Allocate PSRAM playback ring buffer & Base64/VAD scratch buffers

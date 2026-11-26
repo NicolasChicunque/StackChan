@@ -39,10 +39,10 @@ void Screensaver::onInit()
     _screen->setPadding(0, 0, 0, 0);
     _screen->load();
 
-    _naruto_imgs[0] = assets::get_image("naruto_calm_music.bin");
-    _naruto_imgs[1] = assets::get_image("naruto_happy_music.bin");
-    _naruto_imgs[2] = assets::get_image("naruto_smug.bin");
-    _naruto_imgs[3] = assets::get_image("naruto_sleepy.bin");
+    _naruto_imgs[0] = assets::get_image("avatar_calm_music.bin");
+    _naruto_imgs[1] = assets::get_image("avatar_happy_music.bin");
+    _naruto_imgs[2] = assets::get_image("avatar_smug.bin");
+    _naruto_imgs[3] = assets::get_image("avatar_sleepy.bin");
 
     _use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
                    _naruto_imgs[0].data != nullptr);

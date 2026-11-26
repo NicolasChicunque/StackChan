@@ -72,13 +72,13 @@ constexpr uint32_t COL_DIM           = 0x7C89A8;
 constexpr uint32_t COL_WHITE         = 0xFFFFFF;
 
 const char* const NARUTO_ASSET_NAMES[7] = {
-    "naruto_calm.bin",
-    "naruto_thinking.bin",
-    "naruto_happy.bin",
-    "naruto_sleepy.bin",
-    "naruto_shy.bin",
-    "naruto_smug.bin",
-    "naruto_pouty.bin",
+    "avatar_calm.bin",
+    "avatar_thinking.bin",
+    "avatar_happy.bin",
+    "avatar_sleepy.bin",
+    "avatar_shy.bin",
+    "avatar_smug.bin",
+    "avatar_pouty.bin",
 };
 
 int deg_to_yaw(int x_deg)

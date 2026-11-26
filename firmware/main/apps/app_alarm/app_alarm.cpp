@@ -155,16 +155,16 @@ void AppAlarm::onOpen()
     _ring_alarm_idx   = -1;
 
     // Load Naruto expressions if available in assets partition
-    _img_naruto_calm       = assets::get_image("naruto_calm_music.bin");
+    _img_naruto_calm       = assets::get_image("avatar_calm_music.bin");
     if (_img_naruto_calm.data == nullptr) {
-        _img_naruto_calm   = assets::get_image("naruto_calm.bin");
+        _img_naruto_calm   = assets::get_image("avatar_calm.bin");
     }
-    _img_naruto_happy      = assets::get_image("naruto_happy_music.bin");
+    _img_naruto_happy      = assets::get_image("avatar_happy_music.bin");
     if (_img_naruto_happy.data == nullptr) {
-        _img_naruto_happy  = assets::get_image("naruto_happy.bin");
+        _img_naruto_happy  = assets::get_image("avatar_happy.bin");
     }
-    _img_naruto_sleepy     = assets::get_image("naruto_sleepy.bin");
-    _img_naruto_pouty      = assets::get_image("naruto_pouty.bin");
+    _img_naruto_sleepy     = assets::get_image("avatar_sleepy.bin");
+    _img_naruto_pouty      = assets::get_image("avatar_pouty.bin");
     _shown_naruto_idx      = -1;
     _shown_ring_naruto_idx = -1;
 

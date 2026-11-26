@@ -255,8 +255,8 @@ void AppMusicPlayer::onOpen()
     move_home(600);
 
     // 3. Load Naruto sprites from the assets partition
-    _img_naruto_calm  = assets::get_image("naruto_calm_music.bin");
-    _img_naruto_happy = assets::get_image("naruto_happy_music.bin");
+    _img_naruto_calm  = assets::get_image("avatar_calm_music.bin");
+    _img_naruto_happy = assets::get_image("avatar_happy_music.bin");
 
     // 4. Mount microSD card and scan tracks (.wav and .mp3)
     _sd_mounted = mount_sd();
