@@ -130,6 +130,9 @@ private:
     void close_settings();
     void cycle_voice(int delta);
     void change_pitch(int delta_pct);
+    void set_mic_sens(int sens);
+    void set_speak_move(bool enabled);
+    void update_speak_motion(uint32_t now);
     void set_state(SessionState st);
     void set_subtitle(const std::string& text, bool append = false);
     void set_error(const std::string& msg);
@@ -147,7 +150,9 @@ private:
     std::string _model_name = "gemini-3.8-live";
     std::string _voice_name = "Puck";
     int _voice_index        = 0;
-    std::atomic<int> _pitch_pct{110};
+    std::atomic<int> _pitch_pct{100};
+    std::atomic<int> _mic_sens{1};  // 0=LOW, 1=MED, 2=HIGH
+    std::atomic<bool> _speak_move{true};
     bool _settings_open     = false;
     bool _voice_dirty       = false;
     int _volume             = 75;
@@ -174,6 +179,8 @@ private:
     std::atomic<bool> _mcp_agent_active{false};
     std::atomic<uint32_t> _mcp_lease_until_ms{0};
     std::atomic<bool> _mcp_handoff_pending{false};
+    std::atomic<bool> _mcp_handoff_speaking{false};
+    std::atomic<uint32_t> _mcp_handoff_started_ms{0};
     std::atomic<bool> _mcp_end_pending{false};
     std::atomic<bool> _mcp_wait_reply_mode{false};
     std::atomic<bool> _mcp_escalation_ready{false};
@@ -201,6 +208,11 @@ private:
     int _gesture_type      = 0;  // 0=none, 1=nod, 2=shake
     int _gesture_step      = 0;
     uint32_t _gesture_next = 0;
+    bool _speak_moving     = false;
+    int _speak_move_step   = 0;
+    uint32_t _speak_move_next = 0;
+    int _base_yaw_deg      = 0;
+    int _base_pitch_deg    = 45;
 
     std::unique_ptr<WebSocket> _ws;
     PcmRingBuffer _pcm_ring;
@@ -269,8 +281,11 @@ private:
     lv_obj_t* _btn_settings     = nullptr;
     lv_obj_t* _btn_exit         = nullptr;
 
-    // Settings overlay (Voice & Pitch)
+    // Settings overlay (Voice, Pitch, Mic, Move)
     lv_obj_t* _settings_cont    = nullptr;
     lv_obj_t* _lbl_voice_val    = nullptr;
     lv_obj_t* _lbl_pitch_val    = nullptr;
+    lv_obj_t* _btn_mic_sens[3]  = {nullptr, nullptr, nullptr};
+    lv_obj_t* _btn_move_toggle  = nullptr;
+    lv_obj_t* _lbl_move_toggle  = nullptr;
 };

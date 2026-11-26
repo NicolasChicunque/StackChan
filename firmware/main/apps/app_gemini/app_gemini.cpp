@@ -54,6 +54,8 @@ constexpr const char* KEY_API_KEY   = "api_key";
 constexpr const char* KEY_MODEL     = "model";
 constexpr const char* KEY_VOICE     = "voice";
 constexpr const char* KEY_PITCH     = "pitch_pct";
+constexpr const char* KEY_MIC_SENS  = "mic_sens";
+constexpr const char* KEY_SPEAK_MV  = "speak_move";
 constexpr const char* DEFAULT_MODEL = "gemini-3.8-live";
 constexpr const char* DEFAULT_VOICE = "Puck";
 constexpr int DEFAULT_PITCH_PCT     = 100;
@@ -94,8 +96,8 @@ constexpr int W                     = 320;
 constexpr int H                     = 240;
 constexpr int VOLUME_STEP           = 10;
 constexpr uint32_t MAX_LISTEN_MS    = 30000;
-constexpr uint32_t SILENCE_END_MS   = 1800;         // Auto-send after ~1.8 s pause
-constexpr uint32_t ECHO_GUARD_MS    = 250;          // Wait 250 ms after speaker stops before re-arming mic
+constexpr uint32_t SILENCE_END_MS   = 1700;         // Auto-send after ~1.7 s pause
+constexpr uint32_t ECHO_GUARD_MS    = 600;          // Wait 600 ms after speaker stops so tail echo never re-triggers mic
 constexpr size_t MIC_OUT_FRAMES     = 1600;         // 100 ms @ 16 kHz
 constexpr int PREROLL_CHUNKS        = 3;            // 300 ms pre-roll so first syllable is never clipped
 constexpr size_t PCM_RING_SAMPLES   = 24000 * 24;   // 24 s of 24 kHz 16-bit mono (~1.15 MB in PSRAM)
@@ -161,6 +163,7 @@ void send_http_json(httpd_req_t* req, const char* json, const char* status = "20
     httpd_resp_set_status(req, status);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
 }
 
@@ -339,20 +342,49 @@ void AppGemini::onOpen()
     _httpd_ok             = false;
     _mcp_attached         = false;
     _mcp_agent_active     = false;
-    _mcp_lease_until_ms   = 0;
-    _mcp_handoff_pending  = false;
-    _mcp_end_pending      = false;
-    _mcp_wait_reply_mode  = false;
-    _mcp_escalation_ready = false;
-    _mcp_reply_ready      = false;
-    _mcp_playing_wav      = false;
-    _mcp_play_pending     = false;
-    _mcp_play_abort       = false;
-    _mcp_play_started_ms  = 0;
-    _mcp_play_wait_reply  = false;
-    _gesture_type         = 0;
-    _gesture_step         = 0;
-    _gesture_next         = 0;
+    _mcp_lease_until_ms     = 0;
+    _mcp_handoff_pending    = false;
+    _mcp_handoff_speaking   = false;
+    _mcp_handoff_started_ms = 0;
+    _mcp_end_pending        = false;
+    _mcp_wait_reply_mode    = false;
+    _mcp_escalation_ready   = false;
+    _mcp_reply_ready        = false;
+    _mcp_playing_wav        = false;
+    _mcp_play_pending       = false;
+    _mcp_play_abort         = false;
+    _mcp_play_started_ms    = 0;
+    _mcp_play_wait_reply    = false;
+    _gesture_type           = 0;
+    _gesture_step           = 0;
+    _gesture_next           = 0;
+    _speak_moving           = false;
+    _speak_move_step        = 0;
+    _speak_move_next        = 0;
+    _base_yaw_deg           = 0;
+    _base_pitch_deg         = Y_HOME_DEG;
+    {
+        nvs_handle_t h{};
+        if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+            int32_t ms = 1;
+            int32_t mv = 1;
+            if (nvs_get_i32(h, KEY_MIC_SENS, &ms) == ESP_OK) {
+                _mic_sens = std::clamp<int>(static_cast<int>(ms), 0, 2);
+            }
+            if (nvs_get_i32(h, KEY_SPEAK_MV, &mv) == ESP_OK) {
+                _speak_move = (mv != 0);
+            }
+            nvs_close(h);
+        }
+    }
+    GetHAL().setServoPowerEnabled(true);
+    {
+        auto& sc = GetStackChan();
+        sc.clearModifiers();
+        sc.motion().setAutoAngleSyncEnabled(false);
+        sc.motion().setAutoTorqueReleaseEnabled(false);
+        sc.motion().moveWithSpeed(deg_to_yaw(0), deg_to_pitch(Y_HOME_DEG), 500);
+    }
     {
         std::lock_guard<std::mutex> lk(_mcp_mtx);
         _ip_str.clear();
@@ -418,7 +450,20 @@ void AppGemini::onRunning()
 
     process_motion_cmds();
     run_gesture_step(now);
+    update_speak_motion(now);
     GetStackChan().update();
+
+    // Safety timeout: if Charon handoff produced no audio within 5s, still release escalation to AGENT $
+    if (_mcp_handoff_speaking.load() && _mcp_handoff_started_ms.load() != 0 &&
+        (now - _mcp_handoff_started_ms.load()) >= 5000 &&
+        static_cast<SessionState>(_state.load()) != SessionState::Speaking) {
+        if (_mcp_handoff_speaking.exchange(false)) {
+            _mcp_agent_active     = true;
+            _mcp_escalation_ready = true;
+            set_state(SessionState::AgentWait);
+            set_subtitle("Waiting for lead engineer...");
+        }
+    }
 
     // Auto-detach MCP mode cleanly when /stackchanchat heartbeat lease expires
     if (_mcp_attached.load()) {
@@ -1285,10 +1330,18 @@ void AppGemini::process_mic_vad()
     int rms = static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / static_cast<double>(MIC_OUT_FRAMES)));
     _audio_rms.store(rms);
 
-    uint32_t now          = GetHAL().millis();
-    SessionState cur      = static_cast<SessionState>(_state.load());
-    const int trigger_rms = std::max(550, static_cast<int>(_noise_floor * 2.3f));
-    const int hold_rms    = std::max(380, static_cast<int>(_noise_floor * 1.65f));
+    uint32_t now     = GetHAL().millis();
+    SessionState cur = static_cast<SessionState>(_state.load());
+    const int sens   = std::clamp<int>(_mic_sens.load(), 0, 2);
+    // 0=LOW (quiet/strict), 1=MED (balanced default), 2=HIGH (sensitive)
+    static constexpr int kMinTrig[3]   = {1400, 950, 620};
+    static constexpr float kTrigMul[3] = {3.6f, 3.0f, 2.4f};
+    static constexpr int kMinHold[3]   = {800, 560, 400};
+    static constexpr float kHoldMul[3] = {2.2f, 1.9f, 1.65f};
+    static constexpr int kHitsReq[3]   = {3, 3, 2};
+    const int trigger_rms              = std::max<int>(kMinTrig[sens], static_cast<int>(_noise_floor * kTrigMul[sens]));
+    const int hold_rms                 = std::max<int>(kMinHold[sens], static_cast<int>(_noise_floor * kHoldMul[sens]));
+    const int hits_needed              = kHitsReq[sens];
 
     if (cur == SessionState::Listening) {
         // Save chunk in circular 300 ms pre-roll buffer
@@ -1303,7 +1356,7 @@ void AppGemini::process_mic_vad()
 
         if (rms >= trigger_rms) {
             ++_speech_hits;
-            if (_speech_hits >= 2) {
+            if (_speech_hits >= hits_needed) {
                 ESP_LOGI(TAG, "Voice detected (rms=%d, floor=%.0f, trig=%d)", rms, _noise_floor, trigger_rms);
                 _speech_start_ms = now;
                 _last_voice_ms   = now;
@@ -1382,6 +1435,9 @@ void AppGemini::net_task_loop()
                 cid = _mcp_handoff_call_id;
             }
             if (_ws && _ws->IsConnected()) {
+                _mcp_handoff_speaking   = true;
+                _mcp_handoff_started_ms = GetHAL().millis();
+                _server_turn_done       = false;
                 if (!cid.empty()) {
                     std::string tr = "{\"toolResponse\":{\"functionResponses\":[{\"id\":\"" + cid +
                                      "\",\"name\":\"escalate_to_engineer\",\"response\":{\"status\":\"ok\"}}]}}";
@@ -1391,9 +1447,13 @@ void AppGemini::net_task_loop()
                     "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":"
                     "\"Di exactamente esta frase corta en el idioma del usuario y nada mas: "
                     "Paso la orden al ingeniero principal.\"}]}],\"turnComplete\":true}}");
+            } else {
+                // Offline/disconnected fallback: release escalation immediately
+                _mcp_agent_active     = true;
+                _mcp_escalation_ready = true;
+                set_state(SessionState::AgentWait);
+                set_subtitle("Waiting for lead engineer...");
             }
-            _mcp_escalation_ready = true;
-            _mcp_agent_active     = true;
             continue;
         }
 
@@ -1595,7 +1655,16 @@ void AppGemini::spk_task_loop()
                         static_cast<SessionState>(_state.load()) == SessionState::Speaking) {
                         // Brief echo guard before automatically re-arming hands-free mic
                         vTaskDelay(pdMS_TO_TICKS(ECHO_GUARD_MS));
-                        if (_mcp_agent_active.load()) {
+                        if (_mcp_handoff_speaking.exchange(false)) {
+                            // Charon finished speaking handoff: NOW switch to AGENT $ and release escalation to PC
+                            _mcp_agent_active     = true;
+                            _mcp_escalation_ready = true;
+                            set_state(SessionState::AgentWait);
+                            set_subtitle("Waiting for lead engineer...");
+                        } else if (_mcp_wait_reply_mode.load() || _want_arm_listen.load()) {
+                            // Wait-reply mode: play_http_wav arms listening cleanly; do NOT force AgentWait
+                            _want_arm_listen = true;
+                        } else if (_mcp_agent_active.load()) {
                             set_state(SessionState::AgentWait);
                             set_subtitle("Waiting for lead engineer...");
                         } else if (!_closing.load() && !_muted.load()) {
@@ -1705,10 +1774,12 @@ void AppGemini::play_http_wav(const std::string& url, bool wait_reply_after)
     esp_http_client_config_t cfg = {};
     cfg.url                      = url.c_str();
     cfg.method                   = HTTP_METHOD_GET;
-    cfg.timeout_ms               = 8000;
+    cfg.timeout_ms               = 4000;
     cfg.buffer_size              = 4096;
     cfg.buffer_size_tx           = 1024;
-    cfg.crt_bundle_attach        = esp_crt_bundle_attach;
+    if (url.rfind("https://", 0) == 0) {
+        cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    }
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
@@ -1832,16 +1903,7 @@ void AppGemini::play_http_wav(const std::string& url, bool wait_reply_after)
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
-    // Wait for speaker ring buffer to drain cleanly
-    _server_turn_done = true;
-    uint32_t t0       = GetHAL().millis();
-    while (!_closing.load() && !_mcp_play_abort.load() && _pcm_ring.available() > 0 &&
-           (GetHAL().millis() - t0 < 25000)) {
-        vTaskDelay(pdMS_TO_TICKS(25));
-    }
-    vTaskDelay(pdMS_TO_TICKS(120));
-    _mcp_playing_wav = false;
-
+    // Prepare wait_reply flag BEFORE signaling _server_turn_done so spk_task_loop never forces AgentWait
     if (wait_reply_after && !_closing.load()) {
         {
             std::lock_guard<std::mutex> lk(_mcp_mtx);
@@ -1849,7 +1911,20 @@ void AppGemini::play_http_wav(const std::string& url, bool wait_reply_after)
         }
         _mcp_reply_ready     = false;
         _mcp_wait_reply_mode = true;
-        _want_arm_listen     = true;
+    }
+
+    // Wait for speaker ring buffer to drain cleanly
+    _server_turn_done = true;
+    uint32_t t0       = GetHAL().millis();
+    while (!_closing.load() && !_mcp_play_abort.load() && _pcm_ring.available() > 0 &&
+           (GetHAL().millis() - t0 < 20000)) {
+        vTaskDelay(pdMS_TO_TICKS(25));
+    }
+    vTaskDelay(pdMS_TO_TICKS(150));
+    _mcp_playing_wav = false;
+
+    if (wait_reply_after && !_closing.load()) {
+        _want_arm_listen = true;
     }
 }
 
@@ -2320,6 +2395,65 @@ void AppGemini::change_pitch(int delta_pct)
     refresh_settings_ui();
 }
 
+void AppGemini::set_mic_sens(int sens)
+{
+    int clamped = std::clamp<int>(sens, 0, 2);
+    _mic_sens   = clamped;
+    nvs_handle_t h{};
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i32(h, KEY_MIC_SENS, static_cast<int32_t>(clamped));
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    refresh_settings_ui();
+}
+
+void AppGemini::set_speak_move(bool enabled)
+{
+    _speak_move = enabled;
+    nvs_handle_t h{};
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i32(h, KEY_SPEAK_MV, enabled ? 1 : 0);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    refresh_settings_ui();
+}
+
+void AppGemini::update_speak_motion(uint32_t now)
+{
+    if (_gesture_type != 0) {
+        return;
+    }
+    auto& motion = GetStackChan().motion();
+    bool spk     = (static_cast<SessionState>(_state.load()) == SessionState::Speaking);
+    if (spk && _speak_move.load()) {
+        if (!_speak_moving) {
+            _base_yaw_deg    = std::clamp(motion.getCurrentYawAngle() / 10, -120, 120);
+            _base_pitch_deg  = std::clamp(45 - (motion.getCurrentPitchAngle() / 10), 15, 75);
+            _speak_moving    = true;
+            _speak_move_step = 0;
+            _speak_move_next = now;
+        }
+        if (static_cast<int32_t>(now - _speak_move_next) >= 0) {
+            if (_audio_rms.load() > 450) {
+                static const int dx_pat[4] = {-5, 4, 6, -4};
+                static const int dy_pat[4] = {-5, 4, -4, 5};
+                int tx = std::clamp(_base_yaw_deg + dx_pat[_speak_move_step & 3], -120, 120);
+                int ty = std::clamp(_base_pitch_deg + dy_pat[_speak_move_step & 3], 15, 75);
+                motion.moveWithSpeed(deg_to_yaw(tx), deg_to_pitch(ty), 360);
+                ++_speak_move_step;
+                _speak_move_next = now + 420;
+            } else {
+                _speak_move_next = now + 120;
+            }
+        }
+    } else if (_speak_moving) {
+        motion.moveWithSpeed(deg_to_yaw(_base_yaw_deg), deg_to_pitch(_base_pitch_deg), 380);
+        _speak_moving = false;
+    }
+}
+
 void AppGemini::refresh_settings_ui()
 {
     if (_lbl_voice_val) {
@@ -2338,6 +2472,17 @@ void AppGemini::refresh_settings_ui()
             std::snprintf(pbuf, sizeof(pbuf), "%.2fx\n(%+d%%)", static_cast<double>(pct) / 100.0, diff);
         }
         lv_label_set_text(_lbl_pitch_val, pbuf);
+    }
+    int sens = std::clamp<int>(_mic_sens.load(), 0, 2);
+    for (int i = 0; i < 3; ++i) {
+        if (_btn_mic_sens[i]) {
+            lv_obj_set_style_bg_color(_btn_mic_sens[i], lv_color_hex(i == sens ? COL_GEMINI_BLUE : COL_CARD_HI), 0);
+        }
+    }
+    if (_btn_move_toggle && _lbl_move_toggle) {
+        bool mv = _speak_move.load();
+        lv_obj_set_style_bg_color(_btn_move_toggle, lv_color_hex(mv ? COL_GREEN_DK : COL_CARD_HI), 0);
+        lv_label_set_text(_lbl_move_toggle, mv ? "MOVE: ON" : "MOVE: OFF");
     }
 }
 
@@ -2658,7 +2803,7 @@ void AppGemini::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    _btn_settings = make_btn(_root_cont, 234, 190, 78, 44, COL_CARD, LV_SYMBOL_SETTINGS " VOICE", &lv_font_montserrat_12);
+    _btn_settings = make_btn(_root_cont, 234, 190, 78, 44, COL_CARD, LV_SYMBOL_SETTINGS " SET", &lv_font_montserrat_12);
     lv_obj_add_event_cb(
         _btn_settings,
         [](lv_event_t* e) {
@@ -2666,7 +2811,7 @@ void AppGemini::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    /* ====================== SETTINGS OVERLAY (VOICE & PITCH) ====================== */
+    /* ====================== SETTINGS OVERLAY (VOICE, PITCH, MIC, MOVE) ====================== */
     _settings_cont = lv_obj_create(_root_cont);
     lv_obj_set_size(_settings_cont, W, H);
     lv_obj_set_pos(_settings_cont, 0, 0);
@@ -2675,32 +2820,26 @@ void AppGemini::build_ui()
 
     lv_obj_t* lbl_shdr = lv_label_create(_settings_cont);
     lv_obj_set_pos(lbl_shdr, 10, top_y + 2);
-    lv_obj_set_size(lbl_shdr, 240, 20);
-    lv_obj_set_style_text_font(lbl_shdr, &lv_font_montserrat_16, 0);
+    lv_obj_set_size(lbl_shdr, 200, 20);
+    lv_obj_set_style_text_font(lbl_shdr, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_shdr, lv_color_hex(COL_GEMINI_BLUE), 0);
-    lv_label_set_text(lbl_shdr, "< VOICE & PITCH");
-    lv_obj_add_flag(lbl_shdr, LV_OBJ_FLAG_CLICKABLE);
+    lv_label_set_text(lbl_shdr, LV_SYMBOL_SETTINGS " GEMINI SET");
+
+    lv_obj_t* btn_sback =
+        make_btn(_settings_cont, 224, top_y, 86, 26, COL_GEMINI_BLUE, LV_SYMBOL_LEFT " APPLY", &lv_font_montserrat_12);
     lv_obj_add_event_cb(
-        lbl_shdr,
+        btn_sback,
         [](lv_event_t* e) {
             static_cast<AppGemini*>(lv_event_get_user_data(e))->close_settings();
         },
         LV_EVENT_CLICKED, this);
 
+    const int r_y0   = top_y + (is_fix ? 30 : 34);
+    const int r_step = is_fix ? 42 : 46;
+    const int r_h    = is_fix ? 36 : 40;
+
     // Row 1: Voice selector (< | VOICE | >)
-    const int v_cap_y = top_y + (is_fix ? 23 : 38);
-    const int v_row_y = top_y + (is_fix ? 38 : 54);
-    const int p_cap_y = top_y + (is_fix ? 86 : 108);
-    const int p_row_y = top_y + (is_fix ? 101 : 124);
-    const int vp_h    = is_fix ? 42 : 44;
-
-    lv_obj_t* lbl_vcap = lv_label_create(_settings_cont);
-    lv_obj_set_pos(lbl_vcap, 12, v_cap_y);
-    lv_obj_set_style_text_font(lbl_vcap, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_vcap, lv_color_hex(COL_DIM), 0);
-    lv_label_set_text(lbl_vcap, "VOICE");
-
-    lv_obj_t* btn_vprev = make_btn(_settings_cont, 10, v_row_y, 52, vp_h, COL_CARD_HI, LV_SYMBOL_LEFT, &lv_font_montserrat_16);
+    lv_obj_t* btn_vprev = make_btn(_settings_cont, 10, r_y0, 48, r_h, COL_CARD_HI, LV_SYMBOL_LEFT, &lv_font_montserrat_16);
     lv_obj_add_event_cb(
         btn_vprev,
         [](lv_event_t* e) {
@@ -2709,17 +2848,17 @@ void AppGemini::build_ui()
         LV_EVENT_CLICKED, this);
 
     lv_obj_t* vcard = lv_obj_create(_settings_cont);
-    lv_obj_set_pos(vcard, 68, v_row_y);
-    lv_obj_set_size(vcard, 184, vp_h);
+    lv_obj_set_pos(vcard, 64, r_y0);
+    lv_obj_set_size(vcard, 192, r_h);
     style_flat_box(vcard, COL_CARD, 10);
     _lbl_voice_val = lv_label_create(vcard);
     lv_obj_center(_lbl_voice_val);
     lv_obj_set_style_text_align(_lbl_voice_val, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(_lbl_voice_val, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(_lbl_voice_val, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_voice_val, lv_color_hex(COL_WHITE), 0);
 
     lv_obj_t* btn_vnext =
-        make_btn(_settings_cont, 258, v_row_y, 52, vp_h, COL_CARD_HI, LV_SYMBOL_RIGHT, &lv_font_montserrat_16);
+        make_btn(_settings_cont, 262, r_y0, 48, r_h, COL_CARD_HI, LV_SYMBOL_RIGHT, &lv_font_montserrat_16);
     lv_obj_add_event_cb(
         btn_vnext,
         [](lv_event_t* e) {
@@ -2728,13 +2867,7 @@ void AppGemini::build_ui()
         LV_EVENT_CLICKED, this);
 
     // Row 2: Pitch selector (- | PITCH | +)
-    lv_obj_t* lbl_pcap = lv_label_create(_settings_cont);
-    lv_obj_set_pos(lbl_pcap, 12, p_cap_y);
-    lv_obj_set_style_text_font(lbl_pcap, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_pcap, lv_color_hex(COL_DIM), 0);
-    lv_label_set_text(lbl_pcap, "PITCH (LIVE)");
-
-    lv_obj_t* btn_pdn = make_btn(_settings_cont, 10, p_row_y, 52, vp_h, COL_CARD_HI, "-", &lv_font_montserrat_20);
+    lv_obj_t* btn_pdn = make_btn(_settings_cont, 10, r_y0 + r_step, 48, r_h, COL_CARD_HI, "-", &lv_font_montserrat_20);
     lv_obj_add_event_cb(
         btn_pdn,
         [](lv_event_t* e) {
@@ -2743,16 +2876,16 @@ void AppGemini::build_ui()
         LV_EVENT_CLICKED, this);
 
     lv_obj_t* pcard = lv_obj_create(_settings_cont);
-    lv_obj_set_pos(pcard, 68, p_row_y);
-    lv_obj_set_size(pcard, 184, vp_h);
+    lv_obj_set_pos(pcard, 64, r_y0 + r_step);
+    lv_obj_set_size(pcard, 192, r_h);
     style_flat_box(pcard, COL_CARD, 10);
     _lbl_pitch_val = lv_label_create(pcard);
     lv_obj_center(_lbl_pitch_val);
     lv_obj_set_style_text_align(_lbl_pitch_val, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(_lbl_pitch_val, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(_lbl_pitch_val, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_pitch_val, lv_color_hex(COL_WHITE), 0);
 
-    lv_obj_t* btn_pup = make_btn(_settings_cont, 258, p_row_y, 52, vp_h, COL_CARD_HI, "+", &lv_font_montserrat_20);
+    lv_obj_t* btn_pup = make_btn(_settings_cont, 262, r_y0 + r_step, 48, r_h, COL_CARD_HI, "+", &lv_font_montserrat_20);
     lv_obj_add_event_cb(
         btn_pup,
         [](lv_event_t* e) {
@@ -2760,13 +2893,37 @@ void AppGemini::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    // Bottom Apply & Back button
-    lv_obj_t* btn_sback =
-        make_btn(_settings_cont, 50, 190, 220, 42, COL_GEMINI_BLUE, "APPLY & BACK", &lv_font_montserrat_14);
+    // Row 3: Mic sensitivity (LOW / MED / HIGH)
+    const int r3_y          = r_y0 + r_step * 2;
+    const char* mic_lbls[3] = {"MIC LOW", "MIC MED", "MIC HIGH"};
+    for (int i = 0; i < 3; ++i) {
+        _btn_mic_sens[i] = make_btn(_settings_cont, 10 + i * 102, r3_y, 96, r_h, COL_CARD_HI, mic_lbls[i], &lv_font_montserrat_12);
+        lv_obj_set_user_data(_btn_mic_sens[i], reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+        lv_obj_add_event_cb(
+            _btn_mic_sens[i],
+            [](lv_event_t* e) {
+                auto* self = static_cast<AppGemini*>(lv_event_get_user_data(e));
+                int idx    = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(e)))));
+                self->set_mic_sens(idx);
+            },
+            LV_EVENT_CLICKED, this);
+    }
+
+    // Row 4: Speak head motion toggle (MOVE: ON / OFF)
+    const int r4_y   = r_y0 + r_step * 3;
+    _btn_move_toggle = lv_button_create(_settings_cont);
+    lv_obj_set_pos(_btn_move_toggle, 10, r4_y);
+    lv_obj_set_size(_btn_move_toggle, 300, r_h);
+    style_flat_box(_btn_move_toggle, COL_GREEN_DK, 10);
+    _lbl_move_toggle = lv_label_create(_btn_move_toggle);
+    lv_obj_center(_lbl_move_toggle);
+    lv_obj_set_style_text_font(_lbl_move_toggle, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_lbl_move_toggle, lv_color_hex(COL_WHITE), 0);
     lv_obj_add_event_cb(
-        btn_sback,
+        _btn_move_toggle,
         [](lv_event_t* e) {
-            static_cast<AppGemini*>(lv_event_get_user_data(e))->close_settings();
+            auto* self = static_cast<AppGemini*>(lv_event_get_user_data(e));
+            self->set_speak_move(!self->_speak_move.load());
         },
         LV_EVENT_CLICKED, this);
 
@@ -2808,8 +2965,11 @@ void AppGemini::destroy_ui()
         _btn_settings   = nullptr;
         _btn_exit       = nullptr;
         _settings_cont  = nullptr;
-        _lbl_voice_val  = nullptr;
-        _lbl_pitch_val  = nullptr;
+        _lbl_voice_val   = nullptr;
+        _lbl_pitch_val   = nullptr;
+        for (int i = 0; i < 3; ++i) _btn_mic_sens[i] = nullptr;
+        _btn_move_toggle = nullptr;
+        _lbl_move_toggle = nullptr;
     }
 }
 
