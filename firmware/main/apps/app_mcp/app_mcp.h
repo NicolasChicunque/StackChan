@@ -46,6 +46,12 @@ private:
         Count,
     };
 
+    enum class AgentMode : int {
+        Idle = 0,
+        Free,
+        Engineer,
+    };
+
     struct MotionCmd {
         std::string kind;  // move, nod, shake, home
         int x_deg  = 0;
@@ -91,6 +97,7 @@ private:
     static int handle_booth_get(httpd_req* req);
     static int handle_booth_post(httpd_req* req);
     static int handle_listen_resume(httpd_req* req);
+    static int handle_agent_mode(httpd_req* req);
     static int handle_snapshot(httpd_req* req);
 
     /* ------------------------------- UI ----------------------------------- */
@@ -137,6 +144,7 @@ private:
     size_t _rec_wav_bytes  = 0;
 
     // Robot state & motion queue
+    std::atomic<int> _agent_mode{static_cast<int>(AgentMode::Idle)};
     std::atomic<int> _face{static_cast<int>(FaceExpr::Calm)};
     std::atomic<int> _volume{75};
     std::atomic<uint32_t> _silence_stop_ms{2000};
@@ -171,6 +179,9 @@ private:
     lv_obj_t* _lbl_ip       = nullptr;
     lv_obj_t* _lbl_batt     = nullptr;
     lv_obj_t* _stage        = nullptr;
+    lv_obj_t* _mode_badge   = nullptr;
+    lv_obj_t* _mode_dot     = nullptr;
+    lv_obj_t* _lbl_mode     = nullptr;
     lv_obj_t* _avatar_img   = nullptr;
     lv_obj_t* _face_card    = nullptr;
     lv_obj_t* _face_eye_l   = nullptr;

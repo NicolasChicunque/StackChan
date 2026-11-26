@@ -220,6 +220,7 @@ void AppMcp::onOpen()
     _rec_wav_bytes       = 0;
     _auto_hold_until_ms  = 0;
     _mic_level           = 0;
+    _agent_mode          = static_cast<int>(AgentMode::Idle);
     _face                = static_cast<int>(FaceExpr::Calm);
     _gesture_type        = 0;
     _speak_moving        = false;
@@ -438,8 +439,8 @@ void AppMcp::net_task_loop()
 
     if (start_httpd()) {
         _httpd_ok = true;
-        set_status_text("MCP Ready - Antigravity");
-        GetHAL().showRgbColor(0, 48, 42);
+        set_status_text("Waiting for /stackchanchat...");
+        GetHAL().showRgbColor(0, 18, 22);
     } else {
         set_status_text("HTTP server failed");
         GetHAL().showRgbColor(60, 0, 0);
@@ -478,11 +479,12 @@ void AppMcp::mic_task_loop()
     float noise_floor = 130.0f;
 
     while (_running.load()) {
-        bool manual_req = _rec_start_req.exchange(false);
-        uint32_t now_t  = GetHAL().millis();
-        bool auto_ready = _wifi_ok.load() && _httpd_ok.load() && _auto_mode.load() && !_settings_open &&
-                          !_playing.load() && !_play_pending.load() && !_rec_ready.load() &&
-                          static_cast<int32_t>(now_t - _auto_hold_until_ms.load()) >= 0;
+        bool manual_req     = _rec_start_req.exchange(false);
+        uint32_t now_t      = GetHAL().millis();
+        bool session_active = (_agent_mode.load() != static_cast<int>(AgentMode::Idle));
+        bool auto_ready     = _wifi_ok.load() && _httpd_ok.load() && _auto_mode.load() && session_active &&
+                              !_settings_open && !_playing.load() && !_play_pending.load() && !_rec_ready.load() &&
+                              static_cast<int32_t>(now_t - _auto_hold_until_ms.load()) >= 0;
 
         if (!manual_req && !auto_ready) {
             vTaskDelay(pdMS_TO_TICKS(15));
@@ -548,8 +550,10 @@ void AppMcp::mic_task_loop()
         float speech_peak_rms     = 400.0f;
 
         while (_running.load() && !_rec_stop_req.load() && !_play_pending.load() && !_playing.load()) {
-            // If user turned AUTO off or opened settings while silently waiting, exit standby cleanly
-            if ((!manual_req && !_auto_mode.load() && !speech_heard) || (_settings_open && !speech_heard)) {
+            // If user turned AUTO off, returned to IDLE, or opened settings while silently waiting, exit standby cleanly
+            if ((!manual_req && (!_auto_mode.load() || _agent_mode.load() == static_cast<int>(AgentMode::Idle)) &&
+                 !speech_heard) ||
+                (_settings_open && !speech_heard)) {
                 break;
             }
             if (!audio_codec->InputData(raw_in)) {
@@ -683,8 +687,10 @@ void AppMcp::mic_task_loop()
             set_status_text("Sending voice to Antigravity...");
             GetHAL().showRgbColor(0, 72, 24);
         } else if (!_playing.load() && !_play_pending.load()) {
-            set_status_text(_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity");
-            GetHAL().showRgbColor(0, 48, 42);
+            const bool active = (_agent_mode.load() != static_cast<int>(AgentMode::Idle));
+            set_status_text(!active ? "Waiting for /stackchanchat..."
+                                    : (_auto_mode.load() ? "Hands-free: speak anytime" : "MCP Ready - Antigravity"));
+            GetHAL().showRgbColor(0, active ? 48 : 18, active ? 42 : 22);
         }
     }
 
@@ -1144,6 +1150,7 @@ bool AppMcp::start_httpd()
         {"/booth",           HTTP_GET,  handle_booth_get,       this},
         {"/booth",           HTTP_POST, handle_booth_post,      this},
         {"/listen/resume",   HTTP_POST, handle_listen_resume,   this},
+        {"/agent_mode",      HTTP_POST, handle_agent_mode,      this},
         {"/snapshot",        HTTP_GET,  handle_snapshot,        this},
     };
     for (const auto& u : uris) {
@@ -1177,6 +1184,11 @@ int AppMcp::handle_audio_status(httpd_req* req)
     cJSON_AddBoolToObject(root, "recording", self->_rec_active.load());
     cJSON_AddNumberToObject(root, "bytes", static_cast<double>(self->_rec_wav_bytes));
     cJSON_AddStringToObject(root, "mode", "mcp");
+    const int amode       = self->_agent_mode.load();
+    const char* amode_str = (amode == static_cast<int>(AgentMode::Free))       ? "free"
+                            : (amode == static_cast<int>(AgentMode::Engineer)) ? "engineer"
+                                                                               : "idle";
+    cJSON_AddStringToObject(root, "agent_mode", amode_str);
     cJSON_AddStringToObject(root, "ip", ip.c_str());
     cJSON_AddStringToObject(root, "face", face_name(static_cast<FaceExpr>(self->_face.load())));
     char* s = cJSON_PrintUnformatted(root);
@@ -1264,6 +1276,9 @@ int AppMcp::handle_play(httpd_req* req)
 
     cJSON* jwait    = cJSON_GetObjectItem(root, "wait_reply");
     bool wait_reply = cJSON_IsTrue(jwait);
+    if (wait_reply) {
+        self->_agent_mode = static_cast<int>(AgentMode::Engineer);
+    }
 
     {
         std::lock_guard<std::mutex> lk(self->_play_mtx);
@@ -1473,6 +1488,38 @@ int AppMcp::handle_listen_resume(httpd_req* req)
     return ESP_OK;
 }
 
+int AppMcp::handle_agent_mode(httpd_req* req)
+{
+    auto* self = static_cast<AppMcp*>(req->user_ctx);
+    std::string body;
+    if (!read_body(req, body, 256)) {
+        send_json(req, "{\"success\":false,\"error\":\"Invalid body\"}", "400 Bad Request");
+        return ESP_OK;
+    }
+    cJSON* root = cJSON_Parse(body.c_str());
+    if (!root) {
+        send_json(req, "{\"success\":false,\"error\":\"Invalid JSON\"}", "400 Bad Request");
+        return ESP_OK;
+    }
+    cJSON* jmode = cJSON_GetObjectItem(root, "mode");
+    std::string m = (cJSON_IsString(jmode) && jmode->valuestring) ? jmode->valuestring : "";
+    cJSON_Delete(root);
+
+    if (m == "free" || m == "flash" || m == "casual") {
+        self->_agent_mode = static_cast<int>(AgentMode::Free);
+    } else if (m == "engineer" || m == "agent" || m == "ide" || m == "antigravity") {
+        self->_agent_mode = static_cast<int>(AgentMode::Engineer);
+    } else {
+        self->_agent_mode = static_cast<int>(AgentMode::Idle);
+        if (!self->_playing.load() && !self->_play_pending.load() && !self->_rec_speaking.load()) {
+            self->set_status_text("Waiting for /stackchanchat...");
+            GetHAL().showRgbColor(0, 18, 22);
+        }
+    }
+    send_json(req, "{\"success\":true}");
+    return ESP_OK;
+}
+
 /* -------------------------------------------------------------------------- */
 /*                                LVGL UI                                     */
 /* -------------------------------------------------------------------------- */
@@ -1527,6 +1574,27 @@ void AppMcp::build_ui()
     }
     lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, -10);
     lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
+
+    // Operating mode pill badge (top-right of stage, beside Naruto's face)
+    _mode_badge = lv_obj_create(_stage);
+    lv_obj_set_size(_mode_badge, 86, 22);
+    lv_obj_align(_mode_badge, LV_ALIGN_TOP_RIGHT, -6, 6);
+    style_box(_mode_badge, 0x162033, 11);
+    lv_obj_set_style_border_width(_mode_badge, 1, 0);
+    lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0x334155), 0);
+    lv_obj_remove_flag(_mode_badge, LV_OBJ_FLAG_CLICKABLE);
+
+    _mode_dot = lv_obj_create(_mode_badge);
+    lv_obj_set_size(_mode_dot, 7, 7);
+    lv_obj_align(_mode_dot, LV_ALIGN_LEFT_MID, 7, 0);
+    style_box(_mode_dot, 0x64748B, LV_RADIUS_CIRCLE);
+    lv_obj_remove_flag(_mode_dot, LV_OBJ_FLAG_CLICKABLE);
+
+    _lbl_mode = lv_label_create(_mode_badge);
+    lv_obj_align(_lbl_mode, LV_ALIGN_LEFT_MID, 18, 0);
+    lv_obj_set_style_text_font(_lbl_mode, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0x94A3B8), 0);
+    lv_label_set_text(_lbl_mode, "IDLE");
 
     // Classic StackChan face fallback
     _face_card = lv_obj_create(_stage);
@@ -1829,6 +1897,9 @@ void AppMcp::destroy_ui()
         }
         lv_obj_delete(_root);
         _root           = nullptr;
+        _mode_badge     = nullptr;
+        _mode_dot       = nullptr;
+        _lbl_mode       = nullptr;
         _snap_panel     = nullptr;
         _snap_view      = nullptr;
         _snap_hide_ms   = 0;
@@ -1892,6 +1963,32 @@ void AppMcp::refresh_ui(uint32_t now)
     }
 
     lv_label_set_text(_lbl_status, st.c_str());
+
+    if (_mode_badge && _mode_dot && _lbl_mode && _stage) {
+        const auto amode = static_cast<AgentMode>(_agent_mode.load());
+        if (amode == AgentMode::Free) {
+            lv_obj_set_style_bg_color(_mode_badge, lv_color_hex(0x112624), 0);
+            lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0x34D399), 0);
+            lv_obj_set_style_bg_color(_mode_dot, lv_color_hex(0x34D399), 0);
+            lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0x34D399), 0);
+            lv_label_set_text(_lbl_mode, "FREE");
+            lv_obj_set_style_border_color(_stage, lv_color_hex(0x1F6E58), 0);
+        } else if (amode == AgentMode::Engineer) {
+            lv_obj_set_style_bg_color(_mode_badge, lv_color_hex(0x2A1E10), 0);
+            lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0xFBBF24), 0);
+            lv_obj_set_style_bg_color(_mode_dot, lv_color_hex(0xFBBF24), 0);
+            lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0xFBBF24), 0);
+            lv_label_set_text(_lbl_mode, "AGENT $");
+            lv_obj_set_style_border_color(_stage, lv_color_hex(0xB45309), 0);
+        } else {
+            lv_obj_set_style_bg_color(_mode_badge, lv_color_hex(0x162033), 0);
+            lv_obj_set_style_border_color(_mode_badge, lv_color_hex(0x334155), 0);
+            lv_obj_set_style_bg_color(_mode_dot, lv_color_hex(0x64748B), 0);
+            lv_obj_set_style_text_color(_lbl_mode, lv_color_hex(0x94A3B8), 0);
+            lv_label_set_text(_lbl_mode, "IDLE");
+            lv_obj_set_style_border_color(_stage, lv_color_hex(COL_CARD_HI), 0);
+        }
+    }
 
     if (_btn_auto && _lbl_auto) {
         lv_obj_set_style_bg_color(_btn_auto, lv_color_hex(auto_on ? COL_TEAL_DK : COL_CARD), 0);
