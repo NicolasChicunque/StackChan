@@ -644,8 +644,12 @@ void MusicWifiService::load_stations(bool sd_mounted)
     }
 
     if (sd_mounted) {
-        FILE* f = std::fopen(RADIO_FILE_PATH, "r");
-        if (f) {
+        static constexpr const char* kRadioPaths[] = {"/sd/config/radio.txt", RADIO_FILE_PATH};
+        for (const char* path : kRadioPaths) {
+            FILE* f = std::fopen(path, "r");
+            if (!f) {
+                continue;
+            }
             char line[320];
             while (std::fgets(line, sizeof(line), f)) {
                 std::string s = trim_str(line);
@@ -663,6 +667,7 @@ void MusicWifiService::load_stations(bool sd_mounted)
                 }
             }
             std::fclose(f);
+            break;
         }
     }
 

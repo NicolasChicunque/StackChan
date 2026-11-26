@@ -23,7 +23,12 @@ static constexpr std::string_view _default_custom_url =
 
 static std::string read_sd_store_url_override()
 {
-    static constexpr const char *kPaths[] = {"/sdcard/store.txt", "/sd/store.txt"};
+    static constexpr const char *kPaths[] = {
+        "/sd/config/store.txt",
+        "/sdcard/config/store.txt",
+        "/sd/store.txt",
+        "/sdcard/store.txt",
+    };
     for (const char *path : kPaths) {
         std::ifstream file(path);
         if (!file.is_open()) {

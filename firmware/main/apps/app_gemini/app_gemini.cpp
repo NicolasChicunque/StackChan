@@ -438,8 +438,13 @@ bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model, s
         }
     }
 
-    bool found = false;
-    FILE* f    = std::fopen(SD_KEY_PATH, "r");
+    bool found            = false;
+    const char* used_path = "/sd/config/gemini.txt";
+    FILE* f               = std::fopen(used_path, "r");
+    if (!f) {
+        used_path = SD_KEY_PATH;
+        f         = std::fopen(used_path, "r");
+    }
     if (f) {
         char line[256];
         std::vector<std::string> lines;
@@ -459,7 +464,7 @@ bool AppGemini::read_key_from_sd(std::string& out_key, std::string& out_model, s
             out_model = (lines.size() >= 2 && !lines[1].empty()) ? lines[1] : "";
             out_voice = (lines.size() >= 3 && !lines[2].empty()) ? lines[2] : "";
             found     = true;
-            ESP_LOGI(TAG, "Loaded Gemini API key from %s", SD_KEY_PATH);
+            ESP_LOGI(TAG, "Loaded Gemini API key from %s", used_path);
         }
     }
 

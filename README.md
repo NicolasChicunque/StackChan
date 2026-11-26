@@ -21,9 +21,10 @@ This public `feat/community-suite` branch combines all custom apps (`MUSIC` + In
 | --- | --- |
 | `/sd/avatars/avatar_*.bin` | Optional custom LVGL v9 character sprites (loaded into PSRAM; falls back to the classic StackChan face if omitted). Enable via `SETUP -> Device -> Avatar -> Custom`. Full guide & conversion steps: [docs/CUSTOM_AVATARS.md](docs/CUSTOM_AVATARS.md). |
 | `/sd/music/` *(or `/sd/`)* | `.mp3` and `.wav` files for **MUSIC** and **ALARM** ringtones (recursive scan up to 3 levels deep). |
-| `/sd/radio.txt` | Optional custom Internet Radio stations (`Name|StreamURL`, one per line). |
-| `/sd/gemini.txt` | Google AI Studio API key for **GEMINI** (auto-cached to NVS; optional line 2: model ID, line 3: voice). |
-| `/sd/store.txt` | Optional custom JSON catalog URL override for **APP.CENTER** Community Store. |
+| `/sd/config/gemini.txt` | Google AI Studio API key for **GEMINI** (auto-cached to NVS; optional line 2: model ID, line 3: voice; root `/sd/gemini.txt` also supported). |
+| `/sd/config/radio.txt` | Optional custom Internet Radio stations (`Name|StreamURL`, one per line; root `/sd/radio.txt` also supported). |
+| `/sd/config/store.txt` | Optional custom JSON catalog URL override for **APP.CENTER** Community Store (root `/sd/store.txt` also supported). |
+| `/sd/apps/` | Reserved folder for future offline `.bin` app caching. |
 
 ----
 
