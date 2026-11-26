@@ -49,6 +49,7 @@ constexpr int Y_HOME_DEG             = 45;
 constexpr uint32_t REC_SAMPLE_RATE   = 16000;
 constexpr size_t REC_MAX_SECONDS     = 30;
 constexpr uint32_t DEFAULT_PAUSE_MS  = 1500;
+constexpr uint32_t REPLY_WAIT_MS     = 90000;  // mic stays closed until a reply plays (or this timeout)
 constexpr size_t PREROLL_CHUNKS      = 8;  // 8 * 40 ms = 320 ms pre-roll
 constexpr size_t REC_HEADER_BYTES    = 44;
 constexpr size_t REC_BUF_BYTES       = REC_HEADER_BYTES + REC_SAMPLE_RATE * 2 * REC_MAX_SECONDS;
@@ -1122,8 +1123,8 @@ int AppMcp::handle_audio_get(httpd_req* req)
     self->_rec_ready          = false;
     self->_rec_wav_bytes      = 0;
     self->_face               = static_cast<int>(FaceExpr::Thinking);
-    self->_auto_hold_until_ms = GetHAL().millis() + 10000;
-    self->set_status_text("Antigravity thinking...");
+    self->_auto_hold_until_ms = GetHAL().millis() + REPLY_WAIT_MS;
+    self->set_status_text("Waiting for Antigravity reply...");
     GetHAL().showRgbColor(64, 42, 0);
     return ESP_OK;
 }
@@ -1577,7 +1578,6 @@ void AppMcp::destroy_ui()
 
 void AppMcp::refresh_ui(uint32_t now)
 {
-    (void)now;
     if (!_root) {
         return;
     }
@@ -1635,7 +1635,14 @@ void AppMcp::refresh_ui(uint32_t now)
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_OK " SENDING");
         lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_GREEN), 0);
         lv_obj_set_width(_bar_level, 260);
+    } else if (auto_on && static_cast<int32_t>(now - _auto_hold_until_ms.load()) < 0) {
+        lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_YELLOW), 0);
+        lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_BG), 0);
+        lv_label_set_text(_lbl_dictate, LV_SYMBOL_REFRESH " WAITING");
+        lv_obj_set_style_bg_color(_bar_level, lv_color_hex(COL_YELLOW), 0);
+        lv_obj_set_width(_bar_level, 260);
     } else {
+        lv_obj_set_style_text_color(_lbl_dictate, lv_color_hex(COL_WHITE), 0);
         lv_obj_set_style_bg_color(_btn_dictate, lv_color_hex(COL_TEAL_DK), 0);
         lv_label_set_text(_lbl_dictate, LV_SYMBOL_AUDIO " TALK");
         lv_obj_set_width(_bar_level, 0);
