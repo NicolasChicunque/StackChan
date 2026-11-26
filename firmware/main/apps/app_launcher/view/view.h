@@ -34,19 +34,8 @@ public:
     void update();
 
 private:
-    std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
-    std::vector<std::unique_ptr<uitk::lvgl_cpp::Container>> _icon_panels;
-    std::vector<std::unique_ptr<uitk::lvgl_cpp::Image>> _icon_images;
-    std::vector<std::unique_ptr<uitk::lvgl_cpp::Container>> _lr_indicator_panels;
-    std::vector<std::unique_ptr<uitk::lvgl_cpp::Image>> _lr_indicators_images;
-
-    std::unique_ptr<uitk::AnimateVector2> _startup_anim;
-
+    lv_obj_t* _grid = nullptr;
     int _clicked_app_id = -1;
-    State_t _state      = STATE_STARTUP;
-
-    void handle_state_startup();
-    void handle_state_normal();
 };
 
 /**
