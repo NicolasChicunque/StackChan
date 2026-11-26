@@ -23,7 +23,9 @@ changes (local Piper TTS, local Faster-Whisper ASR, single-call conversation too
 Clone your own fork (already contains all local changes on `master`):
 ```powershell
 mkdir D:\StackChan -Force; cd D:\StackChan
-git clone git@github.com:NicolasChicunque/stackchan-mcp.git`r`ncd stackchan-mcp`r`ngit remote add upstream git@github.com:migratorywhale/stackchan-mcp.git
+git clone git@github.com:NicolasChicunque/stackchan-mcp.git
+cd stackchan-mcp
+git remote add upstream git@github.com:migratorywhale/stackchan-mcp.git
 ```
 Fallback only if the fork is unavailable: clone upstream and apply the patch.
 ```powershell
