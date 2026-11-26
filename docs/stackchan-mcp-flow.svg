@@ -1,119 +1,145 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 440" width="960" height="440" role="img" aria-label="How StackChan MCP Works">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 505" width="1080" height="505" role="img" aria-label="StackChan MCP Voice Flow">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#0B1020"/>
       <stop offset="100%" stop-color="#131B30"/>
     </linearGradient>
-    <marker id="arrow-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 1 L 10 5 L 0 9 z" fill="#14C8B4"/>
+    <marker id="arr-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#2DD4BF"/>
     </marker>
-    <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#60A5FA"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M 0 1 L 10 5 L 0 9 z" fill="#34D399"/>
     </marker>
-    <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arr-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M 0 1 L 10 5 L 0 9 z" fill="#FBBF24"/>
-    </marker>
-    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 1 L 10 5 L 0 9 z" fill="#60A5FA"/>
     </marker>
     <style>
       .title { font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
-      .subtitle { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
-      .badge { font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.6px; }
-      .card-title { font: 700 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
-      .card-body { font: 400 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #CBD5E1; }
-      .card-muted { font: 500 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
-      .edge-label { font: 600 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .footer { font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
+      .sub { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
+      .step { font: 700 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.7px; }
+      .h { font: 700 14.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
+      .p { font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #CBD5E1; }
+      .m { font: 500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
+      .el { font: 600 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .foot { font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
     </style>
   </defs>
 
-  <!-- Background -->
-  <rect width="960" height="440" rx="18" fill="url(#bg)"/>
-  <rect x="1" y="1" width="958" height="438" rx="17" fill="none" stroke="#24314F" stroke-width="1.5"/>
+  <!-- Canvas -->
+  <rect width="1080" height="505" rx="18" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1078" height="503" rx="17" fill="none" stroke="#24314F" stroke-width="1.5"/>
 
   <!-- Header -->
-  <text x="36" y="42" class="title">How StackChan MCP Works</text>
-  <text x="36" y="64" class="subtitle">Hands-free voice bridge between StackChan (ESP32-S3) and your active Antigravity workspace</text>
+  <text x="32" y="38" class="title">StackChan MCP — Step-by-Step Voice Flow</text>
+  <text x="32" y="58" class="sub">Left-to-right flow: voice → free casual chat or Antigravity engineer → voice reply</text>
 
-  <!-- Card 1: StackChan Robot -->
-  <g transform="translate(36, 118)">
-    <rect width="225" height="218" rx="14" fill="#142038" stroke="#14C8B4" stroke-width="2"/>
-    <rect x="16" y="16" width="66" height="22" rx="11" fill="#0F3D3E"/>
-    <text x="49" y="31" text-anchor="middle" class="badge" fill="#2DD4BF">STEP 1</text>
+  <g transform="translate(0, 24)">
 
-    <!-- Minimal StackChan face icon -->
-    <rect x="158" y="14" width="50" height="36" rx="8" fill="#0B1020" stroke="#14C8B4" stroke-width="1.5"/>
-    <circle cx="174" cy="28" r="3" fill="#F8FAFC"/>
-    <circle cx="192" cy="28" r="3" fill="#F8FAFC"/>
-    <rect x="176" y="38" width="14" height="3" rx="1.5" fill="#14C8B4"/>
-
-    <text x="16" y="68" class="card-title">StackChan (MCP App)</text>
-    <text x="16" y="92" class="card-body">• Tap TALK or hands-free AUTO</text>
-    <text x="16" y="114" class="card-body">• Plays voice + gentle head</text>
-    <text x="26" y="131" class="card-body">motion (MOVE ON / OFF)</text>
-    <text x="16" y="153" class="card-body">• Shows WAITING (mic off)</text>
-    <text x="26" y="170" class="card-body">while the engineer works</text>
-    <text x="16" y="198" class="card-muted">ESP32-S3 · Wi-Fi HTTP :80</text>
+  <!-- 1. YOU SPEAK -->
+  <g transform="translate(28, 194)">
+    <rect width="128" height="98" rx="14" fill="#142038" stroke="#2DD4BF" stroke-width="2"/>
+    <text x="64" y="24" text-anchor="middle" class="step" fill="#2DD4BF">1 · YOU</text>
+    <text x="64" y="48" text-anchor="middle" class="h">Speak</text>
+    <text x="64" y="68" text-anchor="middle" class="p">Tap TALK or</text>
+    <text x="64" y="84" text-anchor="middle" class="p">hands-free AUTO</text>
   </g>
 
-  <!-- Card 2: PC Voice Hub -->
-  <g transform="translate(328, 118)">
-    <rect width="236" height="218" rx="14" fill="#142038" stroke="#60A5FA" stroke-width="2"/>
-    <rect x="16" y="16" width="66" height="22" rx="11" fill="#172B4D"/>
-    <text x="49" y="31" text-anchor="middle" class="badge" fill="#60A5FA">STEP 2</text>
+  <!-- Arrow 1 -> 2 -->
+  <line x1="156" y1="243" x2="198" y2="243" stroke="#2DD4BF" stroke-width="2.5" marker-end="url(#arr-teal)"/>
 
-    <text x="16" y="68" class="card-title">PC Voice Hub</text>
-    <text x="16" y="92" class="card-body">• Whisper ASR (local, OS lang)</text>
-    <text x="16" y="114" class="card-body">• Piper / Edge TTS (local voice)</text>
-    <text x="16" y="136" class="card-body">• Silent standby (0 tokens idle)</text>
-    <text x="16" y="162" class="card-body">Routes each turn:</text>
-    <text x="24" y="182" class="card-muted">Casual → Flash-Lite · Tech → IDE</text>
-    <text x="16" y="202" class="card-muted">stackchan_chat.py</text>
+  <!-- 2. STACKCHAN ROBOT -->
+  <g transform="translate(204, 178)">
+    <rect width="166" height="130" rx="14" fill="#142038" stroke="#2DD4BF" stroke-width="2"/>
+    <text x="14" y="23" class="step" fill="#2DD4BF">2 · ROBOT</text>
+    <!-- Mini face -->
+    <rect x="116" y="10" width="38" height="26" rx="6" fill="#0B1020" stroke="#2DD4BF" stroke-width="1.4"/>
+    <circle cx="128" cy="20" r="2.3" fill="#F8FAFC"/>
+    <circle cx="142" cy="20" r="2.3" fill="#F8FAFC"/>
+    <rect x="129" y="28" width="12" height="2.4" rx="1.2" fill="#2DD4BF"/>
+
+    <text x="14" y="48" class="h">StackChan MCP</text>
+    <text x="14" y="69" class="p">• Records WAV</text>
+    <text x="14" y="87" class="p">• Plays voice +</text>
+    <text x="22" y="102" class="p">gentle head move</text>
+    <text x="14" y="120" class="m">ESP32-S3 · HTTP :80</text>
   </g>
 
-  <!-- Card 3A: Casual Chat (Free Tier) -->
-  <g transform="translate(652, 92)">
-    <rect width="272" height="118" rx="14" fill="#112624" stroke="#34D399" stroke-width="2"/>
-    <rect x="16" y="14" width="128" height="22" rx="11" fill="#064E3B"/>
-    <text x="80" y="29" text-anchor="middle" class="badge" fill="#34D399">3A · CASUAL CHAT</text>
+  <!-- Arrow 2 -> 3 -->
+  <line x1="370" y1="243" x2="434" y2="243" stroke="#60A5FA" stroke-width="2.5" marker-end="url(#arr-blue)"/>
+  <text x="402" y="233" text-anchor="middle" class="el" fill="#60A5FA">WAV</text>
+  <text x="402" y="261" text-anchor="middle" class="m">Whisper</text>
 
-    <text x="16" y="58" class="card-title">Gemini Flash-Lite (Free)</text>
-    <text x="16" y="80" class="card-body">Fast everyday chat &amp; general facts</text>
-    <text x="16" y="100" class="card-muted">Direct Gemini API · Uses 0 IDE quota</text>
+  <!-- 3. DECISION DIAMOND (PC HUB) -->
+  <g transform="translate(440, 178)">
+    <polygon points="82,0 164,65 82,130 0,65" fill="#172542" stroke="#60A5FA" stroke-width="2.2"/>
+    <text x="82" y="45" text-anchor="middle" class="step" fill="#60A5FA">3 · PC HUB</text>
+    <text x="82" y="67" text-anchor="middle" class="h">Casual or</text>
+    <text x="82" y="85" text-anchor="middle" class="h">Technical?</text>
+    <text x="82" y="103" text-anchor="middle" class="m">stackchan_chat.py</text>
   </g>
 
-  <!-- Card 3B: Antigravity Engineer -->
-  <g transform="translate(652, 232)">
-    <rect width="272" height="134" rx="14" fill="#261E14" stroke="#FBBF24" stroke-width="2"/>
-    <rect x="16" y="14" width="142" height="22" rx="11" fill="#451A03"/>
-    <text x="87" y="29" text-anchor="middle" class="badge" fill="#FBBF24">3B · TECHNICAL / WEB</text>
+  <!-- Branch A (TOP): Casual -> Gemini Flash-Lite -> Piper TTS -> Back to Robot -->
+  <path d="M 522 178 L 522 136 L 614 136" fill="none" stroke="#34D399" stroke-width="2.5" marker-end="url(#arr-green)"/>
+  <text x="568" y="126" text-anchor="middle" class="el" fill="#34D399">Casual</text>
 
-    <text x="16" y="58" class="card-title">Antigravity Engineer</text>
-    <text x="16" y="80" class="card-body">Code, Git, builds, camera &amp; live web</text>
-    <text x="16" y="100" class="card-body">Replies aloud or asks follow-ups</text>
-    <text x="16" y="120" class="card-muted">Runs in your active IDE workspace</text>
+  <!-- 4A. GEMINI FLASH-LITE (aligned column 4: x=620, w=190, h=96) -->
+  <g transform="translate(620, 88)">
+    <rect width="190" height="96" rx="14" fill="#112624" stroke="#34D399" stroke-width="2"/>
+    <text x="14" y="23" class="step" fill="#34D399">4A · FREE TIER</text>
+    <text x="14" y="46" class="h">Gemini Flash-Lite</text>
+    <text x="14" y="66" class="p">Fast everyday chat</text>
+    <text x="14" y="83" class="m">0 Antigravity IDE quota</text>
   </g>
 
-  <!-- Arrows: Robot <-> PC -->
-  <line x1="261" y1="195" x2="322" y2="195" stroke="#14C8B4" stroke-width="2.5" marker-end="url(#arrow-teal)"/>
-  <text x="292" y="186" text-anchor="middle" class="edge-label" fill="#2DD4BF">Voice</text>
+  <!-- Arrow 4A -> 5A -->
+  <line x1="810" y1="136" x2="852" y2="136" stroke="#34D399" stroke-width="2.5" marker-end="url(#arr-green)"/>
 
-  <line x1="328" y1="262" x2="267" y2="262" stroke="#60A5FA" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
-  <text x="298" y="281" text-anchor="middle" class="edge-label" fill="#60A5FA">Audio</text>
+  <!-- 5A. LOCAL TTS (aligned column 5: x=858, w=192, h=96) -->
+  <g transform="translate(858, 88)">
+    <rect width="192" height="96" rx="14" fill="#112624" stroke="#34D399" stroke-width="2"/>
+    <text x="14" y="23" class="step" fill="#34D399">5A · LOCAL TTS</text>
+    <text x="14" y="46" class="h">Piper / Edge</text>
+    <text x="14" y="66" class="p">• Local text → WAV</text>
+    <text x="14" y="83" class="m">OS language locked</text>
+  </g>
 
-  <!-- Arrow: PC <-> 3A Casual -->
-  <path d="M 564 176 C 602 176, 608 151, 646 151" fill="none" stroke="#34D399" stroke-width="2.5" marker-end="url(#arrow-green)"/>
-  <text x="606" y="140" text-anchor="middle" class="edge-label" fill="#34D399">Casual</text>
+  <!-- Return Arrow TOP: 5A -> StackChan (aligned exit x=954) -->
+  <path d="M 954 88 L 954 74 Q 954 68 944 68 L 297 68 Q 287 68 287 78 L 287 172" fill="none" stroke="#34D399" stroke-width="2.2" stroke-dasharray="6,4" marker-end="url(#arr-green)"/>
+  <text x="620" y="61" text-anchor="middle" class="el" fill="#34D399">POST /play (WAV) → StackChan speaks &amp; returns to silent standby</text>
 
-  <!-- Arrow: PC -> 3B Engineer -->
-  <path d="M 564 266 C 602 266, 608 298, 646 298" fill="none" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
-  <text x="606" y="316" text-anchor="middle" class="edge-label" fill="#FBBF24">Escalate</text>
+  <!-- Branch B (BOTTOM): Technical -> WAITING -> Antigravity -> Back to Robot -->
+  <path d="M 522 308 L 522 350 L 614 350" fill="none" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arr-amber)"/>
+  <text x="568" y="340" text-anchor="middle" class="el" fill="#FBBF24">Escalate</text>
 
-  <!-- Return arrow: Engineer -> Robot (bottom smooth path) -->
-  <path d="M 788 366 L 788 384 Q 788 394 778 394 L 158 394 Q 148 394 148 384 L 148 342" fill="none" stroke="#FBBF24" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-amber)"/>
-  <text x="468" y="387" text-anchor="middle" class="edge-label" fill="#FBBF24">Engineer voice reply / gestures (/nod, /shake, /move) → resumes silent standby</text>
+  <!-- 4B. ROBOT WAITING STATE (aligned column 4: x=620, w=190, h=96) -->
+  <g transform="translate(620, 302)">
+    <rect width="190" height="96" rx="14" fill="#2A2112" stroke="#FBBF24" stroke-width="2"/>
+    <text x="14" y="23" class="step" fill="#FBBF24">4B · ROBOT STATE</text>
+    <text x="14" y="46" class="h">WAITING</text>
+    <text x="14" y="66" class="p">• Thinking face</text>
+    <text x="14" y="83" class="p">• Mic OFF (wait_reply)</text>
+  </g>
+
+  <!-- Arrow 4B -> 5B -->
+  <line x1="810" y1="350" x2="852" y2="350" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arr-amber)"/>
+
+  <!-- 5B. ANTIGRAVITY ENGINEER (aligned column 5: x=858, w=192, h=96) -->
+  <g transform="translate(858, 302)">
+    <rect width="192" height="96" rx="14" fill="#261E14" stroke="#FBBF24" stroke-width="2"/>
+    <text x="14" y="23" class="step" fill="#FBBF24">5B · ANTIGRAVITY IDE</text>
+    <text x="14" y="46" class="h">Main Engineer</text>
+    <text x="14" y="66" class="p">• Code, Git, Build, Web</text>
+    <text x="14" y="83" class="m">Done: say · Ask: converse</text>
+  </g>
+
+  <!-- Return Arrow BOTTOM: 5B -> StackChan (aligned exit x=954) -->
+  <path d="M 954 398 L 954 424 Q 954 432 944 432 L 297 432 Q 287 432 287 422 L 287 314" fill="none" stroke="#FBBF24" stroke-width="2.2" stroke-dasharray="6,4" marker-end="url(#arr-amber)"/>
+  <text x="620" y="424" text-anchor="middle" class="el" fill="#FBBF24">POST /play (WAV) via stackchan_say / stackchan_converse + gestures → exits WAITING &amp; resumes standby</text>
 
   <!-- Footer -->
-  <text x="480" y="424" text-anchor="middle" class="footer">Tip: Use GEMINI app for standalone chat without a PC · Use MCP app + /stackchanchat when working in Antigravity</text>
+  <text x="540" y="463" text-anchor="middle" class="foot">Quick rule: Use GEMINI app for standalone chat without a PC  ·  Use MCP app + /stackchanchat when working in Antigravity</text>
+  </g>
 </svg>
