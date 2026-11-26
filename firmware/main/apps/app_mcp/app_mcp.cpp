@@ -10,6 +10,7 @@
 #include <audio/audio_codec.h>
 #include <board.h>
 #include <hal/board/config.h>
+#include <hal/board/hal_bridge.h>
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <settings.h>
@@ -24,6 +25,7 @@
 #include <esp_http_server.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <jpg/image_to_jpeg.h>
 
 #include <algorithm>
 #include <cctype>
@@ -1048,6 +1050,7 @@ bool AppMcp::start_httpd()
         {"/booth",           HTTP_GET,  handle_booth_get,       this},
         {"/booth",           HTTP_POST, handle_booth_post,      this},
         {"/listen/resume",   HTTP_POST, handle_listen_resume,   this},
+        {"/snapshot",        HTTP_GET,  handle_snapshot,        this},
     };
     for (const auto& u : uris) {
         httpd_register_uri_handler(srv, &u);
@@ -1283,6 +1286,59 @@ int AppMcp::handle_booth_get(httpd_req* req)
 int AppMcp::handle_booth_post(httpd_req* req)
 {
     return handle_booth_get(req);
+}
+
+int AppMcp::handle_snapshot(httpd_req* req)
+{
+    auto* camera = hal_bridge::board_get_camera();
+    if (!camera) {
+        send_json(req, "{\"success\":false,\"error\":\"Camera unavailable\"}", "503 Service Unavailable");
+        return ESP_OK;
+    }
+
+    auto frame_lock = camera->TryLockFrame();
+    if (!frame_lock.owns_lock()) {
+        send_json(req, "{\"success\":false,\"error\":\"Camera busy\"}", "503 Service Unavailable");
+        return ESP_OK;
+    }
+
+    bool captured = false;
+    for (int attempt = 0; attempt < 3 && !captured; ++attempt) {
+        captured = camera->StreamCaptures();
+    }
+    if (!captured) {
+        send_json(req, "{\"success\":false,\"error\":\"Capture failed\"}", "500 Internal Server Error");
+        return ESP_OK;
+    }
+
+    uint8_t* jpeg_data = nullptr;
+    size_t jpeg_len    = 0;
+    bool encoded       = image_to_jpeg(const_cast<uint8_t*>(camera->GetFrameData()), camera->GetFrameSize(),
+                                       camera->GetFrameWidth(), camera->GetFrameHeight(),
+                                       static_cast<v4l2_pix_fmt_t>(camera->GetFrameFormat()), 60, &jpeg_data,
+                                       &jpeg_len);
+    if (!encoded || !jpeg_data || jpeg_len == 0) {
+        if (jpeg_data) {
+            free(jpeg_data);
+        }
+        send_json(req, "{\"success\":false,\"error\":\"JPEG encode failed\"}", "500 Internal Server Error");
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    size_t sent = 0;
+    while (sent < jpeg_len) {
+        size_t chunk = std::min<size_t>(8192, jpeg_len - sent);
+        if (httpd_resp_send_chunk(req, reinterpret_cast<const char*>(jpeg_data + sent), static_cast<ssize_t>(chunk)) !=
+            ESP_OK) {
+            break;
+        }
+        sent += chunk;
+    }
+    httpd_resp_send_chunk(req, nullptr, 0);
+    free(jpeg_data);
+    return ESP_OK;
 }
 
 int AppMcp::handle_listen_resume(httpd_req* req)

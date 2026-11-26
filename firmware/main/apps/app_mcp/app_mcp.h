@@ -87,6 +87,7 @@ private:
     static int handle_booth_get(httpd_req* req);
     static int handle_booth_post(httpd_req* req);
     static int handle_listen_resume(httpd_req* req);
+    static int handle_snapshot(httpd_req* req);
 
     /* ------------------------------- UI ----------------------------------- */
     void build_ui();
