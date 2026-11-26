@@ -55,12 +55,13 @@ engineering work.
      workspace tools, or explicitly asks to return to free mode (e.g.
      *"vuelve a gratis"*, *"pásame a free"*), give a concise spoken answer via
      `stackchan_say` and **immediately** relaunch
-     `scripts/stackchan_chat.py --lang auto --no-greeting` so subsequent turns
-     stay on `FREE` (0 IDE quota).
+     `scripts/stackchan_chat.py --lang auto --no-greeting --context "<1-line summary>"`
+     so Flash-Lite keeps the thread and subsequent turns stay on `FREE` (0 IDE quota).
    - **Once the technical work is complete**: speak a concise summary via
      `stackchan_say` and immediately re-launch
-     `scripts/stackchan_chat.py --lang auto --no-greeting` so StackChan stays
-     listening in silent standby without repeating the greeting.
+     `scripts/stackchan_chat.py --lang auto --no-greeting --context "<1-line summary of what was done>"`
+     so StackChan stays listening in silent standby with context intact and
+     without repeating the greeting.
 
 5. **Handle end**: When the user ends the session, the script exits cleanly;
    confirm briefly in chat.
