@@ -1405,7 +1405,11 @@ void AppGemini::net_task_loop()
     auto* codec = Board::GetInstance().GetAudioCodec();
 
     while (!_closing.load()) {
-        if (_want_connect.exchange(false)) {
+        SessionState cur_st = static_cast<SessionState>(_state.load());
+        bool busy_turn      = (cur_st == SessionState::Hearing || cur_st == SessionState::Thinking ||
+                               cur_st == SessionState::Speaking);
+        if (_want_connect.load() && (!busy_turn || _closing.load())) {
+            _want_connect = false;
             connect_live_session();
             continue;
         }
@@ -2655,12 +2659,12 @@ void AppGemini::build_ui()
                             std::lock_guard<std::mutex> lk(self->_mcp_mtx);
                             ip = self->_ip_str;
                         }
-                        char buf[180];
+                        char buf[200];
                         std::snprintf(buf, sizeof(buf),
                                       "ACTIVATE AGENT $ (MCP)\n"
-                                      "1. Open AI agent (Antigravity, Claude...)\n"
-                                      "2. Run /stackchanchat on PC\n"
-                                      "IP: %s  (tap to close)",
+                                      "1. Set STACKCHAN_IP=%s on PC\n"
+                                      "2. Open Antigravity/Claude & run /stackchanchat\n"
+                                      "(tap to close)",
                                       ip.empty() ? "Connecting..." : ip.c_str());
                         lv_label_set_text(self->_lbl_mcp_help, buf);
                         lv_obj_remove_flag(self->_mcp_help_card, LV_OBJ_FLAG_HIDDEN);
