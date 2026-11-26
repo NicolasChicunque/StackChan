@@ -50,6 +50,13 @@ engineering work.
      Then stop calling tools and wait: as soon as the user replies by voice,
      the script prints `[USER_REPLY (<lang>)] <text>` and exits, waking you up
      automatically with full context.
+   - **Fast de-escalation back to `FREE`**: If you are in `--wait-reply`
+     (`AGENT $`) and the user asks an easy/casual question that needs no
+     workspace tools, or explicitly asks to return to free mode (e.g.
+     *"vuelve a gratis"*, *"pásame a free"*), give a concise spoken answer via
+     `stackchan_say` and **immediately** relaunch
+     `scripts/stackchan_chat.py --lang auto --no-greeting` so subsequent turns
+     stay on `FREE` (0 IDE quota).
    - **Once the technical work is complete**: speak a concise summary via
      `stackchan_say` and immediately re-launch
      `scripts/stackchan_chat.py --lang auto --no-greeting` so StackChan stays
