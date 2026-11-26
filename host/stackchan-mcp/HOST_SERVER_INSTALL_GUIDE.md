@@ -20,12 +20,12 @@ changes (local Piper TTS, local Faster-Whisper ASR, single-call conversation too
 - StackChan flashed with the `custom/naruto` branch firmware of this repository
 
 ## 2. Get the server
-Preferred: clone your own fork.
+Clone your own fork (already contains all local changes on `master`):
 ```powershell
 mkdir D:\StackChan -Force; cd D:\StackChan
-git clone git@github.com:<YOUR_GITHUB_USER>/stackchan-mcp.git
+git clone git@github.com:NicolasChicunque/stackchan-mcp.git`r`ncd stackchan-mcp`r`ngit remote add upstream git@github.com:migratorywhale/stackchan-mcp.git
 ```
-Fallback: clone upstream and apply the patch.
+Fallback only if the fork is unavailable: clone upstream and apply the patch.
 ```powershell
 git clone git@github.com:migratorywhale/stackchan-mcp.git
 cd stackchan-mcp
