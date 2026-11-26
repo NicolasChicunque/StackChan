@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 516" width="1120" height="516" role="img" aria-label="StackChan MCP Real End-to-End Voice Flow">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 950" width="820" height="950" role="img" aria-label="StackChan MCP Vertical Voice Flow">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#0B1020"/>
       <stop offset="100%" stop-color="#131B30"/>
     </linearGradient>
@@ -17,118 +17,132 @@
       <path d="M 0 1 L 10 5 L 0 9 z" fill="#FBBF24"/>
     </marker>
     <style>
-      .title { font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
+      .title { font: 700 24px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
       .sub { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
-      .step { font: 700 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.7px; }
-      .h { font: 700 14.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
-      .p { font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #CBD5E1; }
-      .m { font: 500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
+      .step { font: 700 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.8px; }
+      .h { font: 700 15.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #F8FAFC; }
+      .p { font: 400 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #CBD5E1; }
+      .m { font: 500 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
       .el { font: 600 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .chip { font: 700 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.5px; }
       .foot { font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: #94A3B8; }
     </style>
   </defs>
 
   <!-- Canvas -->
-  <rect width="1120" height="516" rx="18" fill="url(#bg)"/>
-  <rect x="1" y="1" width="1118" height="514" rx="17" fill="none" stroke="#24314F" stroke-width="1.5"/>
+  <rect width="820" height="950" rx="20" fill="url(#bg)"/>
+  <rect x="1" y="1" width="818" height="948" rx="19" fill="none" stroke="#24314F" stroke-width="1.5"/>
 
   <!-- Header -->
-  <text x="32" y="38" class="title">StackChan MCP — Real End-to-End Voice Flow</text>
-  <text x="32" y="58" class="sub">Session starts in Antigravity (/stackchanchat) → local Whisper → Gemini Flash-Lite (FREE) → optional Coding Agent (AGENT $) → shared TTS</text>
+  <text x="410" y="44" text-anchor="middle" class="title">StackChan MCP — Voice Flow</text>
+  <text x="410" y="66" text-anchor="middle" class="sub">Top-to-bottom architecture: Antigravity launch → local Whisper → FREE router vs AGENT $ → shared local TTS</text>
 
-  <!-- 0. START SESSION BANNER -->
-  <g transform="translate(28, 74)">
-    <rect width="1064" height="34" rx="10" fill="#121C34" stroke="#334155" stroke-width="1.3"/>
-    <text x="16" y="21" class="step" fill="#2DD4BF">0 · START SESSION:</text>
-    <text x="150" y="21" class="p">Open MCP app on StackChan (</text>
-    <text x="319" y="21" class="el" fill="#94A3B8">IDLE</text>
-    <text x="348" y="21" class="p">, mic OFF)  →  Run </text>
-    <text x="462" y="21" class="el" fill="#FBBF24">/stackchanchat</text>
-    <text x="560" y="21" class="p"> in Antigravity  →  Robot switches to </text>
-    <text x="774" y="21" class="el" fill="#34D399">FREE</text>
-    <text x="808" y="21" class="p"> &amp; arms hands-free mic</text>
+  <!-- STEP 0: SESSION START -->
+  <g transform="translate(110, 88)">
+    <rect width="600" height="94" rx="14" fill="#121E36" stroke="#2DD4BF" stroke-width="2"/>
+    <text x="18" y="23" class="step" fill="#2DD4BF">STEP 0 · SESSION START</text>
+    <rect x="466" y="10" width="118" height="20" rx="10" fill="#162033" stroke="#334155" stroke-width="1"/>
+    <circle cx="480" cy="20" r="3.5" fill="#64748B"/>
+    <text x="490" y="24" class="chip" fill="#94A3B8">IDLE → FREE</text>
+    <text x="18" y="46" class="h">Open MCP App on StackChan  →  Run /stackchanchat in Antigravity</text>
+    <text x="18" y="67" class="p">• StackChan opens in IDLE (mic OFF, zero false triggers) listening on HTTP :80</text>
+    <text x="18" y="84" class="p">• /stackchanchat starts stackchan_chat.py → lights up left FREE avatar &amp; arms hands-free mic</text>
   </g>
 
-  <!-- 1. YOU SPEAK (center y=266) -->
-  <g transform="translate(28, 217)">
-    <rect width="118" height="98" rx="14" fill="#142038" stroke="#2DD4BF" stroke-width="2"/>
-    <text x="59" y="24" text-anchor="middle" class="step" fill="#2DD4BF">1 · YOU</text>
-    <text x="59" y="48" text-anchor="middle" class="h">Speak</text>
-    <text x="59" y="68" text-anchor="middle" class="p">Tap TALK or</text>
-    <text x="59" y="84" text-anchor="middle" class="p">hands-free AUTO</text>
+  <!-- Arrow 0 -> 1 -->
+  <line x1="410" y1="182" x2="410" y2="214" stroke="#2DD4BF" stroke-width="2.5" marker-end="url(#arr-teal)"/>
+  <text x="422" y="203" class="el" fill="#2DD4BF">Session active</text>
+
+  <!-- STEP 1: YOU & ROBOT -->
+  <g transform="translate(110, 220)">
+    <rect width="600" height="86" rx="14" fill="#142038" stroke="#2DD4BF" stroke-width="2"/>
+    <text x="18" y="23" class="step" fill="#2DD4BF">STEP 1 · YOU &amp; STACKCHAN (ESP32-S3)</text>
+
+    <!-- Mini dual-avatar indicator -->
+    <rect x="444" y="10" width="66" height="20" rx="10" fill="#112624" stroke="#34D399" stroke-width="1"/>
+    <circle cx="456" cy="20" r="3" fill="#34D399"/>
+    <text x="465" y="24" class="chip" fill="#34D399">FREE</text>
+    <rect x="516" y="10" width="68" height="20" rx="10" fill="#261E14" stroke="#FBBF24" stroke-width="1"/>
+    <circle cx="527" cy="20" r="3" fill="#FBBF24"/>
+    <text x="535" y="24" class="chip" fill="#FBBF24">AGENT $</text>
+
+    <text x="18" y="47" class="h">Speak Hands-Free (AUTO) or Tap TALK</text>
+    <text x="18" y="69" class="p">• Records 16 kHz WAV on ESP32-S3 and serves it to the PC via GET /audio</text>
   </g>
 
   <!-- Arrow 1 -> 2 -->
-  <line x1="146" y1="266" x2="184" y2="266" stroke="#2DD4BF" stroke-width="2.5" marker-end="url(#arr-teal)"/>
+  <line x1="410" y1="306" x2="410" y2="338" stroke="#60A5FA" stroke-width="2.5" marker-end="url(#arr-blue)"/>
+  <text x="422" y="327" class="el" fill="#60A5FA">WAV audio over Wi-Fi</text>
 
-  <!-- 2. STACKCHAN ROBOT (center y=266) -->
-  <g transform="translate(190, 201)">
-    <rect width="166" height="130" rx="14" fill="#142038" stroke="#2DD4BF" stroke-width="2"/>
-    <text x="14" y="23" class="step" fill="#2DD4BF">2 · ROBOT</text>
-    <rect x="116" y="10" width="38" height="26" rx="6" fill="#0B1020" stroke="#2DD4BF" stroke-width="1.4"/>
-    <circle cx="128" cy="20" r="2.3" fill="#F8FAFC"/>
-    <circle cx="142" cy="20" r="2.3" fill="#F8FAFC"/>
-    <rect x="129" y="28" width="12" height="2.4" rx="1.2" fill="#2DD4BF"/>
-
-    <text x="14" y="48" class="h">StackChan MCP</text>
-    <text x="14" y="69" class="p">• Badge: IDLE/FREE/AGENT $</text>
-    <text x="14" y="87" class="p">• Records WAV &amp; plays</text>
-    <text x="22" y="102" class="p">voice + head move</text>
-    <text x="14" y="120" class="m">ESP32-S3 · HTTP :80</text>
+  <!-- STEP 2: LOCAL WHISPER -->
+  <g transform="translate(110, 344)">
+    <rect width="600" height="78" rx="14" fill="#142038" stroke="#60A5FA" stroke-width="2"/>
+    <text x="18" y="23" class="step" fill="#60A5FA">STEP 2 · LOCAL TRANSCRIPTION (PC)</text>
+    <text x="18" y="46" class="h">Faster-Whisper Speech-to-Text</text>
+    <text x="18" y="66" class="p">• 100% local in stackchan_chat.py · Locked to OS language (switches on explicit voice request)</text>
   </g>
 
   <!-- Arrow 2 -> 3 -->
-  <line x1="356" y1="266" x2="422" y2="266" stroke="#60A5FA" stroke-width="2.5" marker-end="url(#arr-blue)"/>
-  <text x="389" y="256" text-anchor="middle" class="el" fill="#60A5FA">WAV</text>
-  <text x="389" y="284" text-anchor="middle" class="m">Whisper</text>
+  <line x1="410" y1="422" x2="410" y2="454" stroke="#34D399" stroke-width="2.5" marker-end="url(#arr-green)"/>
+  <text x="422" y="443" class="el" fill="#34D399">Transcribed text</text>
 
-  <!-- 3. GEMINI FLASH-LITE ROUTER (center y=266) -->
-  <g transform="translate(428, 191)">
-    <rect width="196" height="150" rx="14" fill="#112624" stroke="#34D399" stroke-width="2.2"/>
-    <text x="14" y="23" class="step" fill="#34D399">3 · FREE TIER ROUTER</text>
-    <text x="14" y="48" class="h">Gemini Flash-Lite</text>
-    <text x="14" y="69" class="p">• Runs in stackchan_chat.py</text>
-    <text x="14" y="88" class="p">• Answers casual chat</text>
-    <text x="14" y="107" class="p">• Decides ESCALATE:</text>
-    <text x="14" y="132" class="m">Badge: FREE · 0 IDE quota</text>
+  <!-- STEP 3: FREE TIER ROUTER -->
+  <g transform="translate(110, 460)">
+    <rect width="600" height="96" rx="14" fill="#112624" stroke="#34D399" stroke-width="2.2"/>
+    <text x="18" y="23" class="step" fill="#34D399">STEP 3 · SMART ROUTER (FREE TIER)</text>
+    <rect x="488" y="10" width="96" height="20" rx="10" fill="#0B1F1C" stroke="#34D399" stroke-width="1"/>
+    <text x="536" y="24" text-anchor="middle" class="chip" fill="#34D399">0 IDE QUOTA</text>
+    <text x="18" y="47" class="h">Gemini Flash-Lite (Direct Interactions API)</text>
+    <text x="18" y="68" class="p">• Answers everyday conversation directly with multi-turn memory</text>
+    <text x="18" y="85" class="p">• Decides ESCALATE_TO_ENGINEER when code, Git, build, flash, or live web is needed</text>
   </g>
 
-  <!-- Direct Casual path: 3 -> 5 -->
-  <line x1="624" y1="231" x2="894" y2="231" stroke="#34D399" stroke-width="2.5" marker-end="url(#arr-green)"/>
-  <text x="759" y="220" text-anchor="middle" class="el" fill="#34D399">Casual reply (FREE · 0 quota)</text>
+  <!-- Fork 3 -> 4A (Left) & 4B (Right) -->
+  <path d="M 270 556 L 270 598" fill="none" stroke="#34D399" stroke-width="2.5" marker-end="url(#arr-green)"/>
+  <text x="258" y="582" text-anchor="end" class="el" fill="#34D399">Casual chat</text>
 
-  <!-- Escalation path: 3 -> 4 -->
-  <path d="M 526 341 L 526 376 L 652 376" fill="none" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arr-amber)"/>
-  <text x="590" y="366" text-anchor="middle" class="el" fill="#FBBF24">ESCALATE:</text>
+  <path d="M 550 556 L 550 598" fill="none" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arr-amber)"/>
+  <text x="562" y="582" text-anchor="start" class="el" fill="#FBBF24">ESCALATE:</text>
 
-  <!-- 4. CODING AGENT (center y=376) -->
-  <g transform="translate(658, 322)">
-    <rect width="198" height="108" rx="14" fill="#261E14" stroke="#FBBF24" stroke-width="2.2"/>
-    <text x="14" y="23" class="step" fill="#FBBF24">4 · CODING AGENT (AGENT $)</text>
-    <text x="14" y="46" class="h">Antigravity / MCP</text>
-    <text x="14" y="66" class="p">• Code, Git, Build, Web</text>
-    <text x="14" y="83" class="p">• Uses agent token quota</text>
-    <text x="14" y="99" class="m">Robot in WAITING (mic OFF)</text>
+  <!-- STEP 4A: CASUAL PATH -->
+  <g transform="translate(68, 604)">
+    <rect width="324" height="118" rx="14" fill="#102422" stroke="#34D399" stroke-width="2"/>
+    <text x="16" y="23" class="step" fill="#34D399">4A · CASUAL PATH (LEFT AVATAR)</text>
+    <text x="16" y="47" class="h">Direct Fast Reply</text>
+    <text x="16" y="69" class="p">• Left FREE avatar stays lit &amp; animated</text>
+    <text x="16" y="88" class="p">• 0 Antigravity / coding agent tokens</text>
+    <text x="16" y="107" class="m">Handled fully inside stackchan_chat.py</text>
   </g>
 
-  <!-- Agent reply path: 4 -> 5 -->
-  <path d="M 856 376 L 878 376 L 878 296 L 894 296" fill="none" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arr-amber)"/>
-
-  <!-- 5. SHARED LOCAL TTS & OUTPUT (center y=266) -->
-  <g transform="translate(900, 201)">
-    <rect width="188" height="130" rx="14" fill="#142038" stroke="#60A5FA" stroke-width="2"/>
-    <text x="14" y="23" class="step" fill="#60A5FA">5 · VOICE OUTPUT</text>
-    <text x="14" y="48" class="h">Piper / Edge TTS</text>
-    <text x="14" y="69" class="p">• Text → WAV (local)</text>
-    <text x="14" y="87" class="p">• OS language locked</text>
-    <text x="14" y="105" class="p">• + MCP gestures / ask</text>
-    <text x="14" y="121" class="m">Shared audio engine</text>
+  <!-- STEP 4B: CODING AGENT PATH -->
+  <g transform="translate(428, 604)">
+    <rect width="324" height="118" rx="14" fill="#261E14" stroke="#FBBF24" stroke-width="2.2"/>
+    <text x="16" y="23" class="step" fill="#FBBF24">4B · AGENT PATH (RIGHT AVATAR)</text>
+    <text x="16" y="47" class="h">Antigravity / MCP Coding Agent</text>
+    <text x="16" y="69" class="p">• Code, Git, Build, Flash, Web search</text>
+    <text x="16" y="88" class="p">• Uses agent token quota (AGENT $)</text>
+    <text x="16" y="107" class="m">Robot enters WAITING (mic OFF) until reply</text>
   </g>
 
-  <!-- Single clean return arrow: 5 -> 2 -->
-  <path d="M 994 331 L 994 458 Q 994 468 984 468 L 283 468 Q 273 468 273 458 L 273 337" fill="none" stroke="#60A5FA" stroke-width="2.4" stroke-dasharray="6,4" marker-end="url(#arr-blue)"/>
-  <text x="633" y="458" text-anchor="middle" class="el" fill="#60A5FA">POST /play (WAV) + optional /nod /shake → StackChan speaks, exits WAITING &amp; resumes FREE standby</text>
+  <!-- Converge 4A & 4B -> 5 -->
+  <path d="M 230 722 L 230 744 L 368 744 L 368 762" fill="none" stroke="#34D399" stroke-width="2.5" marker-end="url(#arr-green)"/>
+  <path d="M 590 722 L 590 744 L 452 744 L 452 762" fill="none" stroke="#FBBF24" stroke-width="2.5" marker-end="url(#arr-amber)"/>
+  <text x="602" y="741" class="m" fill="#FBBF24">+ --context handoff</text>
+
+  <!-- STEP 5: SHARED LOCAL TTS & OUTPUT -->
+  <g transform="translate(110, 768)">
+    <rect width="600" height="96" rx="14" fill="#142038" stroke="#60A5FA" stroke-width="2"/>
+    <text x="18" y="23" class="step" fill="#60A5FA">STEP 5 · SHARED LOCAL VOICE OUTPUT</text>
+    <text x="18" y="47" class="h">Piper / Edge TTS  →  POST /play (WAV) to StackChan</text>
+    <text x="18" y="68" class="p">• Local TTS in OS language + optional /nod /shake + voice-driven gentle head motion</text>
+    <text x="18" y="85" class="p">• Avatar switches FREE ↔ AGENT $ right after playback ends, then resumes silent standby</text>
+  </g>
+
+  <!-- Clean Return Loop along Left Margin: Step 5 -> Step 1 -->
+  <path d="M 110 816 L 40 816 Q 30 816 30 806 L 30 273 Q 30 263 40 263 L 104 263" fill="none" stroke="#60A5FA" stroke-width="2.4" stroke-dasharray="6,4" marker-end="url(#arr-blue)"/>
+  <text transform="translate(19, 540) rotate(-90)" text-anchor="middle" class="el" fill="#60A5FA">NEXT VOICE TURN · RESUMES SILENT FREE STANDBY</text>
 
   <!-- Footer -->
-  <text x="560" y="498" text-anchor="middle" class="foot">Quick rule: Use GEMINI app for standalone chat without a PC  ·  Use MCP app + /stackchanchat when working with a coding agent</text>
+  <text x="410" y="898" text-anchor="middle" class="foot">Quick rule: Use GEMINI app for standalone chat without a PC  ·  Use MCP app + /stackchanchat with a coding agent</text>
+  <text x="410" y="920" text-anchor="middle" class="m">Say "terminamos" / "end chat" anytime → StackChan returns to IDLE (mic OFF)</text>
 </svg>
