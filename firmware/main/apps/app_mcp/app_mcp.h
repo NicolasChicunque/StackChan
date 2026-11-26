@@ -70,10 +70,12 @@ private:
     void change_volume(int delta);
     void change_pause_ms(int delta_ms);
     void set_mic_sens(int sens);
+    void set_speak_move(bool enabled);
     void set_settings_open(bool open);
     void refresh_settings_ui();
     void process_motion_cmds();
     void run_gesture_step(uint32_t now);
+    void update_speak_motion(uint32_t now);
 
     // HTTP handlers (stackchan-mcp compatible)
     static int handle_audio_status(httpd_req* req);
@@ -138,12 +140,19 @@ private:
     std::atomic<int> _volume{75};
     std::atomic<uint32_t> _silence_stop_ms{2000};
     std::atomic<int> _mic_sens{1};  // 0=LOW, 1=MED, 2=HIGH
+    std::atomic<bool> _speak_move{true};
     bool _settings_open = false;
     mutable std::mutex _motion_mtx;
     std::deque<MotionCmd> _motion_cmds;
-    int _gesture_type      = 0;  // 0=none, 1=nod, 2=shake
-    int _gesture_step      = 0;
-    uint32_t _gesture_next = 0;
+    int _gesture_type               = 0;  // 0=none, 1=nod, 2=shake
+    int _gesture_step               = 0;
+    uint32_t _gesture_next          = 0;
+    bool _speak_moving              = false;
+    int _speak_move_step            = 0;
+    uint32_t _speak_move_next       = 0;
+    uint32_t _explicit_motion_until = 0;
+    int _base_yaw_deg               = 0;
+    int _base_pitch_deg             = 45;
 
     mutable std::mutex _status_mtx;
     std::string _ip_str;
@@ -189,4 +198,6 @@ private:
     lv_obj_t* _lbl_set_pause     = nullptr;
     lv_obj_t* _lbl_set_vol       = nullptr;
     lv_obj_t* _btn_sens[3]       = {nullptr, nullptr, nullptr};
+    lv_obj_t* _btn_move_off      = nullptr;
+    lv_obj_t* _btn_move_on       = nullptr;
 };

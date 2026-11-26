@@ -46,6 +46,7 @@ constexpr const char* KEY_VOL        = "volume";
 constexpr const char* KEY_AUTO       = "auto_mode";
 constexpr const char* KEY_PAUSE_MS   = "pause_ms";
 constexpr const char* KEY_MIC_SENS   = "mic_sens";
+constexpr const char* KEY_SPEAK_MOVE = "speak_move";
 constexpr int W                      = 320;
 constexpr int H                      = 240;
 constexpr int Y_HOME_DEG             = 45;
@@ -221,9 +222,15 @@ void AppMcp::onOpen()
     _mic_level           = 0;
     _face                = static_cast<int>(FaceExpr::Calm);
     _gesture_type        = 0;
+    _speak_moving        = false;
+    _speak_move_step     = 0;
+    _speak_move_next     = 0;
+    _explicit_motion_until = 0;
+    _base_yaw_deg        = 0;
+    _base_pitch_deg      = Y_HOME_DEG;
     _shown_naruto_idx    = -1;
 
-    // Load saved speaker volume, auto mode, silence pause & mic sensitivity
+    // Load saved speaker volume, auto mode, silence pause, mic sensitivity & speak motion
     {
         Settings s(NVS_NS, true);
         int v    = s.GetInt(KEY_VOL, 75);
@@ -237,6 +244,7 @@ void AppMcp::onOpen()
         _auto_mode       = s.GetBool(KEY_AUTO, true);
         _silence_stop_ms = static_cast<uint32_t>(std::clamp(p, 500, 4000));
         _mic_sens        = std::clamp(sens, 0, 2);
+        _speak_move      = s.GetBool(KEY_SPEAK_MOVE, true);
     }
     _settings_open = false;
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume.load()), false);
@@ -280,6 +288,7 @@ void AppMcp::onRunning()
 
     process_motion_cmds();
     run_gesture_step(now);
+    update_speak_motion(now);
     GetStackChan().update();
 
     {
@@ -932,6 +941,14 @@ void AppMcp::set_mic_sens(int sens)
     refresh_settings_ui();
 }
 
+void AppMcp::set_speak_move(bool enabled)
+{
+    _speak_move = enabled;
+    Settings s(NVS_NS, true);
+    s.SetBool(KEY_SPEAK_MOVE, enabled);
+    refresh_settings_ui();
+}
+
 void AppMcp::set_settings_open(bool open)
 {
     _settings_open = open;
@@ -967,6 +984,13 @@ void AppMcp::refresh_settings_ui()
             lv_obj_set_style_bg_color(_btn_sens[i], lv_color_hex(i == sens ? COL_TEAL_DK : COL_CARD_HI), 0);
         }
     }
+    bool mv = _speak_move.load();
+    if (_btn_move_off) {
+        lv_obj_set_style_bg_color(_btn_move_off, lv_color_hex(!mv ? COL_TEAL_DK : COL_CARD_HI), 0);
+    }
+    if (_btn_move_on) {
+        lv_obj_set_style_bg_color(_btn_move_on, lv_color_hex(mv ? COL_TEAL_DK : COL_CARD_HI), 0);
+    }
 }
 
 void AppMcp::process_motion_cmds()
@@ -980,13 +1004,20 @@ void AppMcp::process_motion_cmds()
         q.swap(_motion_cmds);
     }
 
+    uint32_t now = GetHAL().millis();
     auto& motion = GetStackChan().motion();
     for (const auto& cmd : q) {
+        _explicit_motion_until = now + 3500;
+        _speak_moving          = false;
         if (cmd.kind == "move") {
-            _gesture_type = 0;
+            _gesture_type   = 0;
+            _base_yaw_deg   = std::clamp(cmd.x_deg, -128, 128);
+            _base_pitch_deg = std::clamp(cmd.y_deg, 0, 90);
             motion.moveWithSpeed(deg_to_yaw(cmd.x_deg), deg_to_pitch(cmd.y_deg), std::clamp(cmd.speed, 100, 1000));
         } else if (cmd.kind == "home") {
-            _gesture_type = 0;
+            _gesture_type   = 0;
+            _base_yaw_deg   = 0;
+            _base_pitch_deg = Y_HOME_DEG;
             motion.moveWithSpeed(deg_to_yaw(0), deg_to_pitch(Y_HOME_DEG), 500);
         } else if (cmd.kind == "nod") {
             _gesture_type = 1;
@@ -1019,6 +1050,48 @@ void AppMcp::run_gesture_step(uint32_t now)
         _gesture_next = now + 260;
         if (++_gesture_step >= 4) {
             _gesture_type = 0;
+        }
+    }
+}
+
+void AppMcp::update_speak_motion(uint32_t now)
+{
+    if (_gesture_type != 0) {
+        return;
+    }
+    if (_explicit_motion_until != 0 && static_cast<int32_t>(now - _explicit_motion_until) < 0) {
+        return;
+    }
+
+    auto& motion = GetStackChan().motion();
+    if (_playing.load() && _speak_move.load()) {
+        if (!_speak_moving) {
+            _base_yaw_deg    = std::clamp(motion.getCurrentYawAngle() / 10, -120, 120);
+            _base_pitch_deg  = std::clamp(45 - (motion.getCurrentPitchAngle() / 10), 15, 75);
+            _speak_moving    = true;
+            _speak_move_step = 0;
+            _speak_move_next = now;
+        }
+        if (static_cast<int32_t>(now - _speak_move_next) >= 0) {
+            if (_speak_rms.load() > 450) {
+                static const int dx_pat[4] = {-5, 4, 6, -4};
+                static const int dy_pat[4] = {-6, 5, -4, 6};
+                int tx = std::clamp(_base_yaw_deg + dx_pat[_speak_move_step & 3], -120, 120);
+                int ty = std::clamp(_base_pitch_deg + dy_pat[_speak_move_step & 3], 15, 75);
+                motion.moveWithSpeed(deg_to_yaw(tx), deg_to_pitch(ty), 360);
+                ++_speak_move_step;
+                _speak_move_next = now + 420;
+            } else {
+                _speak_move_next = now + 120;
+            }
+        }
+    } else if (_speak_moving) {
+        motion.moveWithSpeed(deg_to_yaw(_base_yaw_deg), deg_to_pitch(_base_pitch_deg), 380);
+        _speak_moving = false;
+        uint32_t settle_until = now + 450;
+        uint32_t cur_hold     = _auto_hold_until_ms.load();
+        if (static_cast<int32_t>(settle_until - cur_hold) > 0) {
+            _auto_hold_until_ms.store(settle_until);
         }
     }
 }
@@ -1539,20 +1612,20 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
-    // Settings overlay (hidden by default): Silence Pause, Mic Sensitivity, Volume
+    // Settings overlay (hidden by default): Silence Pause, Mic Sensitivity, Volume, Speak Move
     _settings_panel = lv_obj_create(_root);
     lv_obj_set_pos(_settings_panel, 0, 0);
     lv_obj_set_size(_settings_panel, W, H);
     style_box(_settings_panel, COL_BG, 0);
     lv_obj_add_flag(_settings_panel, LV_OBJ_FLAG_HIDDEN);
 
-    const int set_hdr_y = top_y + (is_fix ? 3 : 10);
-    const int row_h     = is_fix ? 46 : 56;
-    const int row_y0    = top_y + (is_fix ? 33 : 44);
-    const int row_step  = is_fix ? 51 : 64;
-    const int btn_ry    = is_fix ? 5 : 9;
-    const int btn_rh    = is_fix ? 36 : 38;
-    const int lbl_ry    = is_fix ? 14 : 19;
+    const int set_hdr_y = top_y + (is_fix ? 2 : 8);
+    const int row_h     = is_fix ? 39 : 43;
+    const int row_y0    = top_y + (is_fix ? 33 : 42);
+    const int row_step  = is_fix ? 44 : 48;
+    const int btn_ry    = is_fix ? 4 : 5;
+    const int btn_rh    = is_fix ? 31 : 33;
+    const int lbl_ry    = is_fix ? 12 : 14;
 
     lv_obj_t* lbl_set_title = lv_label_create(_settings_panel);
     lv_obj_set_pos(lbl_set_title, 12, set_hdr_y + 4);
@@ -1647,6 +1720,24 @@ void AppMcp::build_ui()
         },
         LV_EVENT_CLICKED, this);
 
+    // Row 4: Speak Motion (OFF / ON)
+    lv_obj_t* row_move = make_row(row_y0 + row_step * 3, "MOVE");
+    _btn_move_off      = make_btn(row_move, 114, btn_ry, 84, btn_rh, "OFF", COL_CARD_HI, COL_WHITE);
+    lv_obj_add_event_cb(
+        _btn_move_off,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->set_speak_move(false);
+        },
+        LV_EVENT_CLICKED, this);
+
+    _btn_move_on = make_btn(row_move, 202, btn_ry, 84, btn_rh, "ON", COL_TEAL_DK, COL_WHITE);
+    lv_obj_add_event_cb(
+        _btn_move_on,
+        [](lv_event_t* e) {
+            static_cast<AppMcp*>(lv_event_get_user_data(e))->set_speak_move(true);
+        },
+        LV_EVENT_CLICKED, this);
+
     refresh_settings_ui();
 
     // Camera preview overlay (shown when a snapshot is taken via MCP; tap to close)
@@ -1737,6 +1828,8 @@ void AppMcp::destroy_ui()
         _lbl_set_pause  = nullptr;
         _lbl_set_vol    = nullptr;
         for (int i = 0; i < 3; ++i) _btn_sens[i] = nullptr;
+        _btn_move_off   = nullptr;
+        _btn_move_on    = nullptr;
     }
 }
 
