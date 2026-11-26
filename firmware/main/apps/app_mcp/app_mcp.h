@@ -10,7 +10,9 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
+#include <lvgl_image.h>
 #include <string>
 
 struct httpd_req;
@@ -174,6 +176,15 @@ private:
 
     // Settings overlay widgets
     lv_obj_t* _settings_panel    = nullptr;
+    lv_obj_t* _snap_panel        = nullptr;
+    lv_obj_t* _snap_view         = nullptr;
+    std::shared_ptr<LvglImage> _snap_img;
+    std::shared_ptr<LvglImage> _snap_shown_img;
+    std::mutex _snap_mtx;
+    std::atomic<bool> _snap_new{false};
+    uint32_t _snap_hide_ms       = 0;
+    void show_snapshot();
+    void hide_snapshot();
     lv_obj_t* _lbl_set_pause     = nullptr;
     lv_obj_t* _lbl_set_vol       = nullptr;
     lv_obj_t* _btn_sens[3]       = {nullptr, nullptr, nullptr};
