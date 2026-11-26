@@ -2337,6 +2337,9 @@ int AppGemini::handle_face(httpd_req* req)
 
 void AppGemini::on_primary_button()
 {
+    if (_mcp_handoff_speaking.load()) {
+        return;
+    }
     SessionState st = static_cast<SessionState>(_state.load());
     switch (st) {
         case SessionState::NeedKey:
@@ -2360,19 +2363,22 @@ void AppGemini::on_primary_button()
             _want_stop_talk = true;
             break;
         case SessionState::Speaking:
+            if (_mcp_agent_active.load()) {
+                // Safely abort current AGENT $ playback without hijacking state
+                _mcp_play_abort = true;
+                break;
+            }
+            [[fallthrough]];
         case SessionState::Thinking:
             // Instant barge-in: stop playback & re-arm listening immediately
             _muted           = false;
             _want_arm_listen = true;
             break;
         case SessionState::AgentWait:
-            // Allow user to tap to cancel waiting and return to Live listening
-            _mcp_agent_active = false;
-            _want_arm_listen  = true;
-            break;
         case SessionState::ConnectingWifi:
         case SessionState::ConnectingApi:
         default:
+            // Non-interactive waiting states: ignore taps to avoid desync/lockups
             break;
     }
 }
@@ -3194,8 +3200,8 @@ void AppGemini::refresh_ui(uint32_t now)
             case SessionState::AgentWait:
                 badge_txt = "AGENT $  WORKING";
                 badge_col = COL_AMBER;
-                btn_txt   = LV_SYMBOL_REFRESH " WAITING";
-                btn_col   = COL_AMBER;
+                btn_txt   = LV_SYMBOL_REFRESH " WORKING...";
+                btn_col   = 0x3A2E1E;
                 break;
             case SessionState::Error:
                 badge_txt = "GEMINI  ERROR";
@@ -3205,10 +3211,23 @@ void AppGemini::refresh_ui(uint32_t now)
                 break;
         }
 
+        const bool btn_disabled = (st == SessionState::AgentWait || st == SessionState::ConnectingWifi ||
+                                   st == SessionState::ConnectingApi);
         lv_label_set_text(_lbl_badge, badge_txt);
         lv_obj_set_style_text_color(_lbl_badge, lv_color_hex(badge_col), 0);
         lv_label_set_text(_lbl_primary, btn_txt);
         lv_obj_set_style_bg_color(_btn_primary, lv_color_hex(btn_col), 0);
+        if (btn_disabled) {
+            lv_obj_remove_flag(_btn_primary, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_state(_btn_primary, LV_STATE_DISABLED);
+            lv_obj_set_style_opa(_btn_primary, LV_OPA_60, 0);
+            lv_obj_set_style_text_color(_lbl_primary, lv_color_hex(0xCBD5E1), 0);
+        } else {
+            lv_obj_add_flag(_btn_primary, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_remove_state(_btn_primary, LV_STATE_DISABLED);
+            lv_obj_set_style_opa(_btn_primary, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(_lbl_primary, lv_color_hex(COL_WHITE), 0);
+        }
     }
 
     // Live caption / subtitle text
