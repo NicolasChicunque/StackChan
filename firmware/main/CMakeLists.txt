@@ -9,6 +9,11 @@ if(CONFIG_LIBC_NEWLIB_NANO_FORMAT)
         "Component config -> C standard library).")
 endif()
 
+option(STACKCHAN_ENABLE_APP_MUSIC  "Include Music Player & Internet Radio app" ON)
+option(STACKCHAN_ENABLE_APP_ALARM  "Include Alarm Clock, Timer & Stopwatch app" ON)
+option(STACKCHAN_ENABLE_APP_GEMINI "Include Gemini Live voice assistant app" ON)
+option(STACKCHAN_ENABLE_APP_MCP    "Include MCP voice & robot bridge app" ON)
+
 file(GLOB_RECURSE STACK_CHAN_SOURCES
     "apps/*.c"
     "apps/*.cc"
@@ -23,6 +28,18 @@ file(GLOB_RECURSE STACK_CHAN_SOURCES
     "stackchan/*.cc"
     "stackchan/*.cpp"
 )
+if(NOT STACKCHAN_ENABLE_APP_MUSIC)
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/apps/app_music_player/")
+endif()
+if(NOT STACKCHAN_ENABLE_APP_ALARM)
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/apps/app_alarm/")
+endif()
+if(NOT STACKCHAN_ENABLE_APP_GEMINI)
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/apps/app_gemini/")
+endif()
+if(NOT STACKCHAN_ENABLE_APP_MCP)
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/apps/app_mcp/")
+endif()
 set(STACK_CHAN_INCLUDE_DIRS 
     "."
 )
@@ -560,3 +577,10 @@ if ("${size}" AND "${offset}")
 else()
     message(STATUS "Assets partition not found, using v1 partition table")
 endif()
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    STACKCHAN_ENABLE_APP_MUSIC=$<BOOL:${STACKCHAN_ENABLE_APP_MUSIC}>
+    STACKCHAN_ENABLE_APP_ALARM=$<BOOL:${STACKCHAN_ENABLE_APP_ALARM}>
+    STACKCHAN_ENABLE_APP_GEMINI=$<BOOL:${STACKCHAN_ENABLE_APP_GEMINI}>
+    STACKCHAN_ENABLE_APP_MCP=$<BOOL:${STACKCHAN_ENABLE_APP_MCP}>
+)

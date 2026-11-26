@@ -41,14 +41,23 @@ extern "C" void app_main(void)
                                      GetMooncake().installApp(std::make_unique<AppAppCenter>()));
         hal_toggles::register_app_id(hal_toggles::App::Ezdata, GetMooncake().installApp(std::make_unique<AppEzdata>()));
         hal_toggles::register_app_id(hal_toggles::App::Dance, GetMooncake().installApp(std::make_unique<AppDance>()));
+#if STACKCHAN_ENABLE_APP_MUSIC
         hal_toggles::register_app_id(hal_toggles::App::Music,
                                      GetMooncake().installApp(std::make_unique<AppMusicPlayer>()));
+#endif
+#if STACKCHAN_ENABLE_APP_GEMINI
         hal_toggles::register_app_id(hal_toggles::App::Gemini, GetMooncake().installApp(std::make_unique<AppGemini>()));
+#endif
+#if STACKCHAN_ENABLE_APP_MCP
         hal_toggles::register_app_id(hal_toggles::App::Mcp, GetMooncake().installApp(std::make_unique<AppMcp>()));
+#endif
+#if STACKCHAN_ENABLE_APP_ALARM
         const int alarm_app_id = GetMooncake().installApp(std::make_unique<AppAlarm>());
         hal_toggles::register_app_id(hal_toggles::App::Alarm, alarm_app_id);
+#endif
         GetMooncake().installApp(std::make_unique<AppSetup>());
 
+#if STACKCHAN_ENABLE_APP_ALARM
         // Start background alarm scheduler (index in launcher list, excluding the launcher itself)
         {
             int alarm_page_index = 0;
@@ -65,6 +74,9 @@ extern "C" void app_main(void)
             }
             AlarmService::instance().start(alarm_page_index, alarm_app_id);
         }
+#else
+        (void)launcher_app_id;
+#endif
 
         // Main loop
         while (1) {
