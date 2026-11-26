@@ -1,32 +1,32 @@
 [
   {
     "name": "Community Suite (All-in-One)",
-    "version": "1.1.0",
-    "description": "All custom apps in one build: Music + Internet Radio + QR Remote, Alarm/Timer/Stopwatch, Gemini Live, MCP Bridge, unified Home/Volume top bar, and MicroSD custom avatars (/sd/avatars).",
+    "version": "1.2.0",
+    "description": "All custom apps in one build: Music + Internet Radio + QR Remote, Alarm/Timer/Stopwatch, Gemini Live, MCP Bridge, unified Home/Volume top bar, /sd/config & /sd/avatars.",
     "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-community-suite-ota.bin"
   },
   {
     "name": "Music Player",
-    "version": "1.0.0",
-    "description": "Play MP3 music directly from the MicroSD card with track browsing, album controls, and background playback.",
+    "version": "1.2.0",
+    "description": "MicroSD MP3/WAV player, AAC/MP3 Internet Radio, mobile Web Remote with QR code & Wi-Fi upload, unified Home/Volume top bar, and /sd/avatars support.",
     "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-music-ota.bin"
   },
   {
     "name": "Alarm Clock",
-    "version": "1.0.0",
-    "description": "Native alarm clock with RTC sync, countdown timer, stopwatch with lap splits, synth tones, and MicroSD MP3 alarms.",
+    "version": "1.2.0",
+    "description": "Native Alarm Clock with RTC sync, Countdown Timer, Stopwatch with laps, synth tones & SD MP3 ringtones, unified Home/Volume top bar, and /sd/avatars.",
     "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-alarm-ota.bin"
   },
   {
     "name": "Gemini Live",
-    "version": "1.0.0",
-    "description": "Real-time hands-free voice assistant powered by Gemini Live API with adaptive VAD and configurable voice settings.",
+    "version": "1.2.0",
+    "description": "Hands-free real-time voice assistant via Gemini Live API with adaptive VAD, voice & pitch settings, /sd/config/gemini.txt, unified top bar, and /sd/avatars.",
     "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-gemini-ota.bin"
   },
   {
     "name": "MCP Bridge",
-    "version": "1.0.0",
-    "description": "Voice and robot bridge connecting StackChan to desktop AI agents over MCP for speech, expressions, camera, and motion.",
+    "version": "1.2.0",
+    "description": "Hands-free voice & robot bridge for Antigravity IDE with dual FREE/AGENT avatars, camera preview, MOVE gestures, unified top bar, and /sd/avatars.",
     "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-mcp-ota.bin"
   }
 ]
