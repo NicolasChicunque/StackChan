@@ -12,6 +12,7 @@
 #include <functional>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <memory>
 
 namespace view {
@@ -22,8 +23,7 @@ namespace view {
  */
 class AppListPage {
 public:
-    AppListPage(const app_center::AppInfoList_t& app_list)
-
+    AppListPage(const app_center::AppInfoList_t& app_list, bool is_custom_store)
     {
         _panel = std::make_unique<uitk::lvgl_cpp::Container>(lv_screen_active());
         _panel->setSize(320, 240);
@@ -31,8 +31,8 @@ public:
         _panel->setBgColor(lv_color_hex(0xFFFAD6));
         _panel->setFlexFlow(LV_FLEX_FLOW_COLUMN);
         _panel->setFlexAlign(LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        _panel->setPadding(52, 72, 0, 0);
-        _panel->setPadRow(18);
+        _panel->setPadding(40, 72, 0, 0);
+        _panel->setPadRow(14);
         _panel->setRadius(0);
         _panel->setBorderWidth(0);
         _panel->setScrollbarMode(LV_SCROLLBAR_MODE_ACTIVE);
@@ -49,13 +49,68 @@ public:
         _title_panel->setPadding(0, 0, 0, 0);
         _title_panel->setRadius(0);
         _title_panel->setBorderWidth(0);
-        _title_panel->setScrollbarMode(LV_SCROLLBAR_MODE_ACTIVE);
+        _title_panel->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
 
         _title = std::make_unique<uitk::lvgl_cpp::Label>(*_title_panel);
         _title->setText("App Center");
         _title->setTextFont(&lv_font_montserrat_16);
         _title->setTextColor(lv_color_hex(0xFFF8C7));
         _title->align(LV_ALIGN_CENTER, 0, 0);
+
+        // Segmented store selector: Community / Official
+        _store_bar = std::make_unique<uitk::lvgl_cpp::Container>(*_panel);
+        _store_bar->setSize(282, 36);
+        _store_bar->setRadius(18);
+        _store_bar->setBorderWidth(0);
+        _store_bar->setBgColor(lv_color_hex(0xF3D48E));
+        _store_bar->setPadding(3, 3, 3, 3);
+        _store_bar->setPadColumn(4);
+        _store_bar->setFlexFlow(LV_FLEX_FLOW_ROW);
+        _store_bar->setFlexAlign(LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        _store_bar->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
+
+        _btn_custom = std::make_unique<uitk::lvgl_cpp::Button>(*_store_bar);
+        _btn_custom->setSize(136, 30);
+        _btn_custom->setRadius(15);
+        _btn_custom->setBorderWidth(0);
+        _btn_custom->setShadowWidth(0);
+        _btn_custom->setBgColor(lv_color_hex(is_custom_store ? 0xF4A354 : 0xF3D48E));
+        _btn_custom->label().setText("Community");
+        _btn_custom->label().setTextFont(&lv_font_montserrat_16);
+        _btn_custom->label().setTextColor(lv_color_hex(is_custom_store ? 0xFFF8C7 : 0x7A5720));
+        _btn_custom->label().setAlign(LV_ALIGN_CENTER);
+        _btn_custom->onClick().connect([this, is_custom_store]() {
+            if (!is_custom_store) {
+                _store_switch_target = 1;
+            }
+        });
+
+        _btn_official = std::make_unique<uitk::lvgl_cpp::Button>(*_store_bar);
+        _btn_official->setSize(136, 30);
+        _btn_official->setRadius(15);
+        _btn_official->setBorderWidth(0);
+        _btn_official->setShadowWidth(0);
+        _btn_official->setBgColor(lv_color_hex(is_custom_store ? 0xF3D48E : 0xF4A354));
+        _btn_official->label().setText("Official");
+        _btn_official->label().setTextFont(&lv_font_montserrat_16);
+        _btn_official->label().setTextColor(lv_color_hex(is_custom_store ? 0x7A5720 : 0xFFF8C7));
+        _btn_official->label().setAlign(LV_ALIGN_CENTER);
+        _btn_official->onClick().connect([this, is_custom_store]() {
+            if (is_custom_store) {
+                _store_switch_target = 0;
+            }
+        });
+
+        if (app_list.empty()) {
+            _empty_label = std::make_unique<uitk::lvgl_cpp::Label>(*_panel);
+            _empty_label->setText("No apps found.\nCheck Wi-Fi or switch store.");
+            _empty_label->setTextFont(&lv_font_montserrat_16);
+            _empty_label->setTextColor(lv_color_hex(0x7A5720));
+            _empty_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
+            _empty_label->setWidth(260);
+            _empty_label->setLongMode(LV_LABEL_LONG_WRAP);
+            return;
+        }
 
         int index = 0;
         for (const auto& app : app_list) {
@@ -70,7 +125,7 @@ public:
             btn->label().setTextFont(&lv_font_montserrat_20);
             btn->label().setTextColor(lv_color_hex(0x47330A));
             btn->label().setLongMode(LV_LABEL_LONG_SCROLL_CIRCULAR);
-            btn->label().setWidth(220);
+            btn->label().setWidth(240);
             btn->label().setTextAlign(LV_TEXT_ALIGN_CENTER);
             btn->label().setAlign(LV_ALIGN_CENTER);
 
@@ -88,14 +143,26 @@ public:
         return temp;
     }
 
+    int checkStoreSwitch()
+    {
+        int temp             = _store_switch_target;
+        _store_switch_target = -1;
+        return temp;
+    }
+
 private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
     std::unique_ptr<uitk::lvgl_cpp::Container> _title_panel;
     std::unique_ptr<uitk::lvgl_cpp::Label> _title;
+    std::unique_ptr<uitk::lvgl_cpp::Container> _store_bar;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_custom;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_official;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _empty_label;
     std::vector<std::unique_ptr<uitk::lvgl_cpp::Button>> _buttons;
     lv_image_dsc_t _bg_image;
 
-    int _clicked_index = -1;
+    int _clicked_index       = -1;
+    int _store_switch_target = -1;
 };
 
 /**
@@ -114,8 +181,8 @@ public:
         _panel->setRadius(0);
         _panel->setFlexFlow(LV_FLEX_FLOW_COLUMN);
         _panel->setFlexAlign(LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        _panel->setPadding(48, 72, 0, 0);
-        _panel->setPadRow(18);
+        _panel->setPadding(42, 72, 0, 0);
+        _panel->setPadRow(12);
         _panel->setScrollbarMode(LV_SCROLLBAR_MODE_ACTIVE);
 
         _bg_image = assets::get_image("app_center_bg.png");
@@ -129,19 +196,27 @@ public:
         _title->setTextColor(lv_color_hex(0x47330A));
         _title->setTextAlign(LV_TEXT_ALIGN_CENTER);
         _title->setLongMode(LV_LABEL_LONG_SCROLL_CIRCULAR);
-        _title->setWidth(220);
+        _title->setWidth(240);
         _title->setHeight(28);
+
+        if (!app_info.version.empty()) {
+            _version_label = std::make_unique<uitk::lvgl_cpp::Label>(*_panel);
+            _version_label->setText(fmt::format("v{}", app_info.version));
+            _version_label->setTextFont(&lv_font_montserrat_16);
+            _version_label->setTextColor(lv_color_hex(0xA36135));
+            _version_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
+        }
 
         _desc_label = std::make_unique<uitk::lvgl_cpp::Label>(*_panel);
         _desc_label->setText(app_info.description);
-        _desc_label->setTextFont(&lv_font_montserrat_20);
+        _desc_label->setTextFont(&lv_font_montserrat_16);
         _desc_label->setTextColor(lv_color_hex(0x47330A));
         _desc_label->setTextAlign(LV_TEXT_ALIGN_LEFT);
         _desc_label->setWidth(260);
         _desc_label->setLongMode(LV_LABEL_LONG_WRAP);
 
         _btn_container = std::make_unique<uitk::lvgl_cpp::Container>(*_panel);
-        _btn_container->setSize(LV_PCT(100), 80);
+        _btn_container->setSize(LV_PCT(100), 68);
         _btn_container->setBgOpa(LV_OPA_TRANSP);
         _btn_container->setBorderWidth(0);
         _btn_container->setPadding(0, 0, 0, 0);
@@ -166,7 +241,7 @@ public:
         _btn_launch->setBgColor(lv_color_hex(0xFFAC6D));
         _btn_launch->setBorderWidth(0);
         _btn_launch->setShadowWidth(0);
-        _btn_launch->label().setText("Launch");
+        _btn_launch->label().setText("Install");
         _btn_launch->label().setTextFont(&lv_font_montserrat_20);
         _btn_launch->label().setTextColor(lv_color_hex(0x47330A));
         _btn_launch->onClick().connect([this]() { _is_launch = true; });
@@ -193,6 +268,7 @@ public:
 private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
     std::unique_ptr<uitk::lvgl_cpp::Label> _title;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _version_label;
     std::unique_ptr<uitk::lvgl_cpp::Label> _desc_label;
     std::unique_ptr<uitk::lvgl_cpp::Container> _btn_container;
     std::unique_ptr<uitk::lvgl_cpp::Button> _btn_back;
@@ -239,7 +315,8 @@ public:
         _tips->setTextFont(&lv_font_montserrat_16);
         _tips->setTextColor(lv_color_hex(0xA36135));
         _tips->setTextAlign(LV_TEXT_ALIGN_CENTER);
-        _tips->setLongMode(LV_LABEL_LONG_SCROLL_CIRCULAR);
+        _tips->setLongMode(LV_LABEL_LONG_WRAP);
+        _tips->setWidth(260);
         _tips->align(LV_ALIGN_CENTER, 0, -40);
 
         _progress_bar = std::make_unique<uitk::lvgl_cpp::Bar>(*_panel);
@@ -266,13 +343,53 @@ public:
         _progress_bar->setValue(percent);
     }
 
+    void setError(std::string_view message)
+    {
+        _tips->setText(std::string(message));
+        _tips->setTextColor(lv_color_hex(0xB83227));
+        _tips->align(LV_ALIGN_CENTER, 0, -24);
+
+        if (_progress_bar) {
+            _progress_bar->setHidden(true);
+        }
+        if (_progress) {
+            _progress->setHidden(true);
+        }
+
+        if (!_btn_back) {
+            _btn_back = std::make_unique<uitk::lvgl_cpp::Button>(*_panel);
+            _btn_back->setSize(128, 46);
+            _btn_back->setRadius(18);
+            _btn_back->setBgColor(lv_color_hex(0xFFDF9A));
+            _btn_back->setBorderWidth(0);
+            _btn_back->setShadowWidth(0);
+            _btn_back->align(LV_ALIGN_CENTER, 0, 38);
+            _btn_back->label().setText("Back");
+            _btn_back->label().setTextFont(&lv_font_montserrat_20);
+            _btn_back->label().setTextColor(lv_color_hex(0x47330A));
+            _btn_back->onClick().connect([this]() { _is_back = true; });
+        }
+    }
+
+    bool checkBack()
+    {
+        if (_is_back) {
+            _is_back = false;
+            return true;
+        }
+        return false;
+    }
+
 private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
     std::unique_ptr<uitk::lvgl_cpp::Label> _title;
     std::unique_ptr<uitk::lvgl_cpp::Label> _tips;
     std::unique_ptr<uitk::lvgl_cpp::Label> _progress;
     std::unique_ptr<uitk::lvgl_cpp::Bar> _progress_bar;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_back;
     lv_image_dsc_t _bg_image;
+
+    bool _is_back = false;
 };
 
 }  // namespace view

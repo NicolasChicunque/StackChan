@@ -7,14 +7,85 @@
 #include "utils/ota/ota.h"
 #include "utils/secret_logic/secret_logic.h"
 #include <mooncake_log.h>
+#include <settings.h>
 #include <memory>
+#include <fstream>
 #include <board.h>
 #include <cJSON.h>
 
 static const std::string_view _tag = "HAL-AppCenter";
 
-static std::string get_app_info_list_url()
+static constexpr std::string_view _store_nvs_ns       = "app_center";
+static constexpr std::string_view _store_custom_key   = "use_custom";
+static constexpr std::string_view _store_url_key      = "custom_url";
+static constexpr std::string_view _default_custom_url =
+    "https://raw.githubusercontent.com/NicolasChicunque/StackChan/feat/custom-app-store/store/apps.json";
+
+static std::string read_sd_store_url_override()
 {
+    static constexpr const char *kPaths[] = {"/sdcard/store.txt", "/sd/store.txt"};
+    for (const char *path : kPaths) {
+        std::ifstream file(path);
+        if (!file.is_open()) {
+            continue;
+        }
+        std::string line;
+        if (std::getline(file, line)) {
+            while (!line.empty() &&
+                   (line.back() == '\r' || line.back() == '\n' || line.back() == ' ' || line.back() == '\t')) {
+                line.pop_back();
+            }
+            size_t start = 0;
+            while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) {
+                start++;
+            }
+            line = line.substr(start);
+            if (line.rfind("http://", 0) == 0 || line.rfind("https://", 0) == 0) {
+                return line;
+            }
+        }
+    }
+    return "";
+}
+
+bool Hal::isCustomAppStoreEnabled()
+{
+    Settings settings(_store_nvs_ns.data(), false);
+    return settings.GetInt(_store_custom_key.data(), 1) != 0;
+}
+
+void Hal::setCustomAppStoreEnabled(bool enabled)
+{
+    Settings settings(_store_nvs_ns.data(), true);
+    settings.SetInt(_store_custom_key.data(), enabled ? 1 : 0);
+}
+
+std::string Hal::getCustomAppStoreUrl()
+{
+    if (std::string sd_url = read_sd_store_url_override(); !sd_url.empty()) {
+        return sd_url;
+    }
+
+    Settings settings(_store_nvs_ns.data(), false);
+    std::string url = settings.GetString(_store_url_key.data(), "");
+    if (!url.empty()) {
+        return url;
+    }
+
+    return std::string(_default_custom_url);
+}
+
+void Hal::setCustomAppStoreUrl(std::string_view url)
+{
+    Settings settings(_store_nvs_ns.data(), true);
+    settings.SetString(_store_url_key.data(), std::string(url));
+}
+
+static std::string get_app_info_list_url(Hal &hal)
+{
+    if (hal.isCustomAppStoreEnabled()) {
+        return hal.getCustomAppStoreUrl();
+    }
     return secret_logic::get_server_url() + "/stackChan/apps";
 }
 
@@ -36,8 +107,11 @@ app_center::AppInfoList_t Hal::fetchAppList()
     auto &board  = Board::GetInstance();
     auto network = board.GetNetwork();
 
+    const std::string url = get_app_info_list_url(*this);
+    mclog::tagInfo(_tag, "fetching app list from: {}", url);
+
     auto http = network->CreateHttp(0);
-    if (!http->Open("GET", get_app_info_list_url())) {
+    if (!http->Open("GET", url)) {
         mclog::tagError(_tag, "failed to open http connection");
         return app_list;
     }
@@ -89,6 +163,10 @@ app_center::AppInfoList_t Hal::fetchAppList()
                 info.name = name;
             }
 
+            if (const char *version = get_json_string(item, {"version", "appVersion"})) {
+                info.version = version;
+            }
+
             if (const char *icon = get_json_string(item, {"iconUrl", "appIcon", "icon"})) {
                 info.iconUrl = icon;
             }
@@ -97,8 +175,8 @@ app_center::AppInfoList_t Hal::fetchAppList()
                 info.description = desc;
             }
 
-            if (const char *url = get_json_string(item, {"firmwareUrl", "downloadUrl", "otaUrl", "url"})) {
-                info.firmwareUrl = url;
+            if (const char *fw_url = get_json_string(item, {"firmwareUrl", "downloadUrl", "otaUrl", "url"})) {
+                info.firmwareUrl = fw_url;
             }
 
             app_list.push_back(info);
@@ -119,9 +197,9 @@ static void ota_callback(int progress)
     }
 }
 
-void Hal::launchApp(std::string_view url, std::function<void(int)> onProgress)
+bool Hal::launchApp(std::string_view url, std::function<void(int)> onProgress)
 {
     mclog::tagInfo(_tag, "launching app from url: {}", url);
     _on_progress = onProgress;
-    start_ota_update(url.data(), ota_callback);
+    return start_ota_update(url.data(), ota_callback);
 }
