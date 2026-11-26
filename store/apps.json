@@ -1,9 +1,15 @@
 [
   {
     "name": "Community Suite (All-in-One)",
-    "version": "1.2.0",
-    "description": "All custom apps in one build: Music + Internet Radio + QR Remote, Alarm/Timer/Stopwatch, Gemini Live, MCP Bridge, unified Home/Volume top bar, /sd/config & /sd/avatars.",
+    "version": "1.3.0",
+    "description": "All flagship apps: Music + Radio + QR, Alarm/Timer/Stopwatch, Gemini Live, MCP Bridge, unified Home/Volume bar, offline SD App Cache, /sd/config & /sd/avatars.",
     "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-community-suite-ota.bin"
+  },
+  {
+    "name": "Community Labs Pack (12 Apps)",
+    "version": "1.3.0",
+    "description": "FX Currency, Health/Water Breaks, Board Games Dice, Stream Deck, NFC Studio, Smart Home, Google Calendar, English Streaks, Trakt.tv, SD File Explorer, Buddy Companion & CI Sentinel.",
+    "firmwareUrl": "https://github.com/NicolasChicunque/StackChan/releases/latest/download/stackchan-community-labs-ota.bin"
   },
   {
     "name": "Music Player",
