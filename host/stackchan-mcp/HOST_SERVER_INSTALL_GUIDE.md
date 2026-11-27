@@ -1,88 +1,54 @@
-# StackChan MCP Host Server: Install Guide
+# StackChan MCP Host Server — Install Guide
 
-Use this guide to rebuild the voice chat setup after reformatting the computer.
-The host server is a personal fork of `migratorywhale/stackchan-mcp` with local
-changes (local Piper TTS, local Faster-Whisper ASR, silent standby `/stackchanchat` loop).
+Optional PC companion setup that connects StackChan's **`GEMINI`** app (Auto-Attach MCP) to **Antigravity IDE**, letting StackChan handle everyday conversation directly on the ESP32-S3 (0 IDE quota) and escalate coding, Git, build, or camera tasks to your PC workspace.
+
+> **Official Antigravity Plugin repo:** **[NicolasChicunque/stackchan-mcp](https://github.com/NicolasChicunque/stackchan-mcp)** (includes `plugin.json`, `mcp_config.json`, `/stackchanchat` skill, and `scripts/stackchan_bridge.py`).
 
 ## Architecture Overview
 
 ![How StackChan MCP Works](../../docs/stackchan-mcp-flow.svg)
 
-## Files in this folder
-| File | Purpose |
-| --- | --- |
-| `HOST_SERVER_INSTALL_GUIDE.md` | This guide |
-| `stackchan-mcp-local-changes.patch` | Local changes on top of upstream commit `7673c4c` (only needed if the fork is not available) |
-| `stackchan-mcp.env.template` | `.env` template, secrets blanked |
-| `antigravity-mcp-config.example.json` | Antigravity MCP server entry |
-| `skills/stackchanchat/SKILL.md` | Antigravity `/stackchanchat` skill (token-saving background voice loop + escalation) |
-| `antigravity-voice-chat-mode.rule.md` | Optional pointer rule for plain phrases |
-
 ## 1. Requirements
-- Windows, Python 3.11+, `uv` (`pip install uv`)
-- FFmpeg (`winget install Gyan.FFmpeg`)
-- Git with a GitHub SSH key
-- StackChan flashed with the `custom/naruto` branch firmware of this repository
 
-## 2. Get the server
-Clone your own fork (already contains all local changes on `master`):
-```powershell
-mkdir D:\StackChan -Force; cd D:\StackChan
-git clone git@github.com:NicolasChicunque/stackchan-mcp.git
-cd stackchan-mcp
-git remote add upstream git@github.com:migratorywhale/stackchan-mcp.git
-```
-Fallback only if the fork is unavailable: clone upstream and apply the patch.
-```powershell
-git clone git@github.com:migratorywhale/stackchan-mcp.git
-cd stackchan-mcp
-git checkout 7673c4c9cb93a342824f94c2a91432e4cdbafcf0
-git apply --whitespace=nowarn ..\StackChan\host\stackchan-mcp\stackchan-mcp-local-changes.patch
+- Python 3.11+, `uv` (`pip install uv`), and FFmpeg
+- StackChan running **Community Suite** (`main` branch or latest [GitHub Release](https://github.com/NicolasChicunque/StackChan/releases))
+- Free Google AI Studio API key saved in `/sd/config/gemini.txt` on StackChan's microSD card
+
+## 2. Install as an Antigravity Plugin *(Recommended)*
+
+Clone directly into Antigravity's plugins folder so both the `stackchan` MCP server and `/stackchanchat` skill register automatically:
+
+```bash
+git clone https://github.com/NicolasChicunque/stackchan-mcp.git ~/.gemini/config/plugins/stackchan-mcp
+cd ~/.gemini/config/plugins/stackchan-mcp
+uv sync && uv pip install edge-tts
 ```
 
-## 3. Install dependencies
-```powershell
-cd D:\StackChan\stackchan-mcp
-Copy-Item ..\StackChan\host\stackchan-mcp\stackchan-mcp.env.template .env
-uv sync
-uv pip install piper-tts faster-whisper numpy edge-tts
+*(On Windows PowerShell, use `$env:USERPROFILE\.gemini\config\plugins\stackchan-mcp`.)*
+
+## 3. Configure `.env`
+
+```bash
+cp .env.example .env
 ```
 
-## 4. Local voice model (Piper)
-Download `es_MX-claude-high.onnx` and `es_MX-claude-high.onnx.json` from
-`https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_MX/claude/high`
-into `D:\StackChan\stackchan-mcp\models\piper\`.
+Edit `.env` and set your device IP (shown on StackChan's **`GEMINI`** screen):
 
-## 5. Configure `.env`
-- `STACKCHAN_IP`: IP address shown by the MCP app on the device
-- `TTS_ENGINE="piper"`, `STACKCHAN_ASR_ENGINE="whisper"`, `STACKCHAN_WHISPER_MODEL="small"`
-- `STACKCHAN_PIPER_MODEL`: full path to the `.onnx` file
-- `GEMINI_API_KEY`: Gemini API key used by `scripts/stackchan_chat.py`
-- Keys and tokens stay empty in the template and are never committed.
-
-## 6. Register in Antigravity
-Copy the `stackchan` block from `antigravity-mcp-config.example.json` into
-`C:\Users\<user>\.gemini\config\mcp_config.json`, then restart Antigravity.
-
-## 7. Install the `/stackchanchat` skill
-Copy the `skills\stackchanchat` folder into `C:\Users\<user>\.gemini\config\skills\stackchanchat\`:
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.gemini\config\skills\stackchanchat" | Out-Null
-Copy-Item D:\StackChan\StackChan\host\stackchan-mcp\skills\stackchanchat\SKILL.md "$env:USERPROFILE\.gemini\config\skills\stackchanchat\SKILL.md"
-```
-(Optional) Copy `antigravity-voice-chat-mode.rule.md` into `C:\Users\<user>\.gemini\config\rules\`.
-
-## 8. Build and flash the firmware
-Requires ESP-IDF 6.1 (`idf >=6.1.0,<6.2.0`).
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-$env:IDF_PATH = 'C:\Users\<user>\xs-dev\esp-idf-v6.1'
-$env:IDF_TOOLS_PATH = 'C:\Users\<user>\xs-dev\espressif-tools-6.1'
-. "$env:IDF_PATH\export.ps1"
-cd D:\StackChan\StackChan\firmware
-ninja -C build
-python -m esptool --chip esp32s3 -p COM3 -b 460800 write-flash 0x20000 build\stack-chan.bin
+```env
+STACKCHAN_IP="192.168.1.xxx"
+TTS_ENGINE="edge-tts"
 ```
 
-## 9. Verify
-Open the `MCP` app on StackChan, run `stackchan_status`, then invoke `/stackchanchat`.
+> **Privacy note:** Keep `.env` local and never commit API keys or tokens. In **Unified `GEMINI` + Auto-Attach MCP** mode (`scripts/stackchan_bridge.py`), speech recognition and casual chat run natively on the ESP32-S3 — no local Whisper or PC `GEMINI_API_KEY` is required.
+
+## 4. Run & Verify
+
+1. Restart Antigravity IDE so the plugin loads.
+2. Open **`GEMINI`** on StackChan (displays its local IP and `PC OFF` until attached).
+3. In Antigravity IDE, run **`/stackchanchat`** — StackChan switches to `MCP READY` and keeps casual chat on-device while escalating engineering tasks to your workspace.
+
+---
+
+### Legacy Mode (`MCP` App with Local Whisper/Piper)
+
+If you prefer the legacy `MCP` app with local Faster-Whisper ASR and Piper TTS, see the [stackchan-mcp README](https://github.com/NicolasChicunque/stackchan-mcp#readme) and [`stackchan-mcp.env.template`](stackchan-mcp.env.template).

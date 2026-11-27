@@ -27,7 +27,7 @@ static constexpr std::string_view _store_source_key   = "store_src";
 static constexpr std::string_view _store_custom_key   = "use_custom";
 static constexpr std::string_view _store_url_key      = "custom_url";
 static constexpr std::string_view _default_custom_url =
-    "https://raw.githubusercontent.com/NicolasChicunque/StackChan/feat/custom-app-store/store/apps.json";
+    "https://raw.githubusercontent.com/NicolasChicunque/StackChan/main/store/apps.json";
 
 static constexpr const char *kSdMountPt = "/sd";
 static constexpr const char *kSdAppsDir = "/sd/apps";

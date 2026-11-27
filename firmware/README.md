@@ -1,53 +1,57 @@
+# StackChan Firmware (ESP-IDF v6.1)
 
-## Build
+Build and flash instructions for **StackChan Community Suite** on M5Stack CoreS3 (`esp32s3`).
 
-### Fetch Dependencies
+## Prerequisites
+
+- [ESP-IDF v6.1](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/index.html)
+- Python 3.10+
+
+## Quick Build & Flash
 
 ```bash
+cd firmware
 python3 ./fetch_repos.py
+idf.py set-target esp32s3
+idf.py build flash monitor
 ```
 
-### Tool Chains
-
-[ESP-IDF v6.1](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/index.html)
-
-### Build
+### Generate a Single M5Burner Image (`0x0`)
 
 ```bash
-idf.py build
+idf.py merge-bin -o stackchan-community-suite-merged.bin
 ```
 
-### Host-side tests
+Flash `stackchan-community-suite-merged.bin` at offset `0x0` with M5Burner or `esptool`.
 
-The motion coordinate helpers can be tested without ESP-IDF hardware:
+## Modular App Selection (CMake Flags)
+
+To stay comfortably inside the ESP32-S3 OTA partition limit, custom apps are compiled modularly via CMake options defined in [`main/CMakeLists.txt`](main/CMakeLists.txt):
+
+| Pack | Flags |
+| --- | --- |
+| **Community Suite** *(default)* | `-DSTACKCHAN_ENABLE_APP_MUSIC=ON -DSTACKCHAN_ENABLE_APP_ALARM=ON -DSTACKCHAN_ENABLE_APP_GEMINI=ON -DSTACKCHAN_ENABLE_APP_MCP=ON` |
+| **Community Labs Pack (12 Apps)** | Set the 4 flags above to `OFF` and enable `FX`, `HEALTH`, `GAMES`, `DECK`, `NFC`, `HOME`, `CALENDAR`, `ENGLISH`, `TRAKT`, `FILES`, `COMPANION`, `SENTINEL` |
+| **Standalone App** | Enable only one `STACKCHAN_ENABLE_APP_<NAME>=ON` and set the rest to `OFF` |
+
+Example building **Music Player** standalone:
+
+```bash
+idf.py -DSTACKCHAN_ENABLE_APP_MUSIC=ON -DSTACKCHAN_ENABLE_APP_ALARM=OFF -DSTACKCHAN_ENABLE_APP_GEMINI=OFF -DSTACKCHAN_ENABLE_APP_MCP=OFF build
+```
+
+## Built-in Apps
+
+- **Stock M5Stack:** `AI.AGENT`, `AVATAR`, `ESPNOW.REMOTE`, `APP.CENTER` *(with Community/Official store toggle & SD cache)*, `EZDATA`, `DANCE`, `SETUP`
+- **Community Suite:** `MUSIC` (SD MP3/WAV + Internet Radio + Web/QR Remote), `ALARM` (Alarm/Timer/Stopwatch + RTC + SD MP3 ringtones + Nightstand), `GEMINI` (Direct Gemini Live API + Auto-Attach MCP bridge), `MCP` (Legacy HTTP bridge)
+- **Community Labs Pack:** `FX`, `HEALTH`, `GAMES`, `DECK`, `NFC`, `HOME`, `CALENDAR`, `ENGLISH`, `TRAKT`, `FILES`, `COMPANION`, `SENTINEL`
+
+## Host-Side Unit Tests
+
+Motion coordinate helpers can be tested without ESP-IDF hardware:
 
 ```bash
 cmake -S tests -B build-host-tests
 cmake --build build-host-tests
 ctest --test-dir build-host-tests --output-on-failure
 ```
-
-### Flash
-
-```bash
-idf.py flash
-```
-
-## Built-in Apps
-
-- `AI.AGENT` – Xiaozhi voice AI assistant
-- `AVATAR` – Remote avatar / WebSocket / video call mode
-- `ESPNOW.REMOTE` – ESP-NOW wireless controller
-- `APP.CENTER` – Online firmware/app launcher
-- `EZDATA` – EzData cloud integration
-- `DANCE` – BLE dance controller
-- `MUSIC` – MicroSD Music Player, Internet Radio & Web Remote (`.wav` & `.mp3` from `/sd`, live Wi-Fi MP3 radio streaming, phone/PC Web Remote with QR code and Wi-Fi MP3 upload, rhythm RGB LEDs & servo sway, NVS-persisted settings)
-- `GEMINI` – Direct Gemini Live API voice assistant (`WSS` over Wi-Fi, hands-free VAD, voice & pitch settings, free-tier API key via `/sd/gemini.txt` + NVS)
-- `ALARM` – Google Clock-inspired Alarm & Clock app with RTC, multiple alarms, snooze/stop gestures, synthetic tones & microSD MP3 ringtones, nightstand mode, and background wake service
-- `SETUP` – Device settings, hardware tests, and app visibility toggles
-
-## Alarm Clock App (`AppAlarm`)
-
-- **Screens**: Clock (`ALARMS` | `NIGHT` | `SET` | `EXIT`), Alarm list (toggle ON/OFF, `+ NEW`), Editor (time, weekdays, tag, tone, `TEST`, `SD MP3`), Settings (snooze `1–30 min`, max volume, `SYNC NTP`, `TEST RING`), and Ringing (`SNOOZE` / `STOP`).
-- **Background service**: `AlarmService` (`alarm_service.cpp`) is started from `main.cpp` and polls the system clock every 500 ms. Alarms and snooze state are stored in the `alarm_clock` NVS namespace.
-- **SD ringtones**: any `.mp3` file on the microSD card (up to 2 folder levels deep). If the card cannot be read when an alarm fires, the Chime tone is used as a fallback.

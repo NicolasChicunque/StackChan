@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. store-v1.2.0)"
+        description: "Release tag (e.g. store-v1.4.0)"
         required: true
-        default: "store-v1.2.0"
+        default: "store-v1.4.0"
       source_ref:
         description: "Branch/ref to build all modular apps from"
         required: false
-        default: "feat/community-suite"
+        default: "main"
 
 permissions:
   contents: write
@@ -51,7 +51,7 @@ jobs:
       - name: Checkout modular codebase
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.source_ref || 'feat/community-suite' }}
+          ref: ${{ github.event.inputs.source_ref || 'main' }}
           fetch-depth: 0
           submodules: recursive
 
