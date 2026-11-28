@@ -154,19 +154,19 @@ void AppAlarm::onOpen()
     _audio_rms        = 0;
     _ring_alarm_idx   = -1;
 
-    // Load Naruto expressions if available in assets partition
-    _img_naruto_calm       = assets::get_image("avatar_calm_music.bin");
-    if (_img_naruto_calm.data == nullptr) {
-        _img_naruto_calm   = assets::get_image("avatar_calm.bin");
+    // Load Custom Avatar expressions if available in assets partition
+    _img_avatar_calm       = assets::get_image("avatar_calm_music.bin");
+    if (_img_avatar_calm.data == nullptr) {
+        _img_avatar_calm   = assets::get_image("avatar_calm.bin");
     }
-    _img_naruto_happy      = assets::get_image("avatar_happy_music.bin");
-    if (_img_naruto_happy.data == nullptr) {
-        _img_naruto_happy  = assets::get_image("avatar_happy.bin");
+    _img_avatar_happy      = assets::get_image("avatar_happy_music.bin");
+    if (_img_avatar_happy.data == nullptr) {
+        _img_avatar_happy  = assets::get_image("avatar_happy.bin");
     }
-    _img_naruto_sleepy     = assets::get_image("avatar_sleepy.bin");
-    _img_naruto_pouty      = assets::get_image("avatar_pouty.bin");
-    _shown_naruto_idx      = -1;
-    _shown_ring_naruto_idx = -1;
+    _img_avatar_sleepy     = assets::get_image("avatar_sleepy.bin");
+    _img_avatar_pouty      = assets::get_image("avatar_pouty.bin");
+    _shown_avatar_idx      = -1;
+    _shown_ring_avatar_idx = -1;
 
     set_sync_text("RTC ready");
 
@@ -1054,9 +1054,9 @@ void AppAlarm::build_ui()
 
     // Custom sprite avatar image (loaded from /sd/avatars when enabled in SETUP)
     _avatar_img = lv_image_create(_stage);
-    if (_img_naruto_calm.data != nullptr) {
-        lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        uint16_t scale = (_img_naruto_calm.header.w > 130) ? 150 : 256;
+    if (_img_avatar_calm.data != nullptr) {
+        lv_image_set_src(_avatar_img, &_img_avatar_calm);
+        uint16_t scale = (_img_avatar_calm.header.w > 130) ? 150 : 256;
         lv_image_set_scale(_avatar_img, scale);
     }
     lv_obj_align(_avatar_img, LV_ALIGN_RIGHT_MID, -14, -10);
@@ -1693,11 +1693,11 @@ void AppAlarm::build_ui()
     lv_obj_align(_ring_mouth, LV_ALIGN_CENTER, 0, 16);
     style_box(_ring_mouth, COL_WHITE, 6);
 
-    // Naruto avatar image on ringing screen
+    // Custom Avatar avatar image on ringing screen
     _ring_avatar_img = lv_image_create(_scr_ring);
-    if (_img_naruto_happy.data != nullptr) {
-        lv_image_set_src(_ring_avatar_img, &_img_naruto_happy);
-        uint16_t rscale = (_img_naruto_happy.header.w > 130) ? (is_fix ? 140 : 160) : 256;
+    if (_img_avatar_happy.data != nullptr) {
+        lv_image_set_src(_ring_avatar_img, &_img_avatar_happy);
+        uint16_t rscale = (_img_avatar_happy.header.w > 130) ? (is_fix ? 140 : 160) : 256;
         lv_image_set_scale(_ring_avatar_img, rscale);
     }
     lv_obj_align(_ring_avatar_img, LV_ALIGN_CENTER, 0, is_fix ? 8 : -4);
@@ -2071,21 +2071,21 @@ void AppAlarm::refresh_ringing_ui(uint32_t now_ms)
 
 void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
 {
-    bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-                       _img_naruto_calm.data != nullptr);
+    bool use_avatar = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Custom &&
+                       _img_avatar_calm.data != nullptr);
 
     if (_screen == Screen::Clock) {
-        if (use_naruto && _avatar_img) {
+        if (use_avatar && _avatar_img) {
             if (_face_card) lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
 
-            const lv_image_dsc_t* target_img = _night_mode ? &_img_naruto_sleepy : &_img_naruto_calm;
+            const lv_image_dsc_t* target_img = _night_mode ? &_img_avatar_sleepy : &_img_avatar_calm;
             int target_idx                   = _night_mode ? 1 : 0;
-            if (target_img->data != nullptr && _shown_naruto_idx != target_idx) {
+            if (target_img->data != nullptr && _shown_avatar_idx != target_idx) {
                 lv_image_set_src(_avatar_img, target_img);
                 uint16_t scale = (target_img->header.w > 130) ? 150 : 256;
                 lv_image_set_scale(_avatar_img, scale);
-                _shown_naruto_idx = target_idx;
+                _shown_avatar_idx = target_idx;
             }
             int dy = _night_mode ? 0 : static_cast<int>(std::sin(now_ms * 0.003f) * 2.0f);
             lv_obj_align(_avatar_img, LV_ALIGN_RIGHT_MID, -14, -10 + dy);
@@ -2102,7 +2102,7 @@ void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
         }
     } else if (_screen == Screen::Ringing) {
         const int ring_base_y = (view::get_status_bar_top_offset() > 0) ? 8 : -4;
-        if (use_naruto && _ring_avatar_img) {
+        if (use_avatar && _ring_avatar_img) {
             if (_ring_face_card) lv_obj_add_flag(_ring_face_card, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(_ring_avatar_img, LV_OBJ_FLAG_HIDDEN);
 
@@ -2111,15 +2111,15 @@ void AppAlarm::refresh_avatar_anim(uint32_t now_ms)
 
             // Responsive expression based on audio volume
             bool loud = _audio_rms.load() > 800;
-            const lv_image_dsc_t* ring_img = loud ? &_img_naruto_happy : &_img_naruto_pouty;
-            if (ring_img->data == nullptr) ring_img = &_img_naruto_happy;
-            if (ring_img->data == nullptr) ring_img = &_img_naruto_calm;
+            const lv_image_dsc_t* ring_img = loud ? &_img_avatar_happy : &_img_avatar_pouty;
+            if (ring_img->data == nullptr) ring_img = &_img_avatar_happy;
+            if (ring_img->data == nullptr) ring_img = &_img_avatar_calm;
             int ring_idx = loud ? 1 : 0;
-            if (ring_img->data != nullptr && _shown_ring_naruto_idx != ring_idx) {
+            if (ring_img->data != nullptr && _shown_ring_avatar_idx != ring_idx) {
                 lv_image_set_src(_ring_avatar_img, ring_img);
                 uint16_t rscale = (ring_img->header.w > 130) ? ((ring_base_y > 0) ? 140 : 160) : 256;
                 lv_image_set_scale(_ring_avatar_img, rscale);
-                _shown_ring_naruto_idx = ring_idx;
+                _shown_ring_avatar_idx = ring_idx;
             }
         } else if (_ring_face_card) {
             if (_ring_avatar_img) lv_obj_add_flag(_ring_avatar_img, LV_OBJ_FLAG_HIDDEN);

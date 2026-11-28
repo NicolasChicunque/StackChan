@@ -332,8 +332,8 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
 
     auto& avatar = stackchan.avatar();
 
-    // Map emotion string to stackchan::Emotion (and extended Naruto sprite states)
-    auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar);
+    // Map emotion string to stackchan::Emotion (and extended Custom Avatar sprite states)
+    auto* custom_avatar = dynamic_cast<DefaultAvatar*>(&avatar);
 
     if (strcmp(emotion, "neutral") == 0) {
         avatar.setEmotion(Emotion::Neutral);
@@ -347,8 +347,8 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
     } else if (strcmp(emotion, "smug") == 0 || strcmp(emotion, "cool") == 0 || strcmp(emotion, "confident") == 0 ||
                strcmp(emotion, "winking") == 0) {
         avatar.setEmotion(Emotion::Happy);
-        if (naruto_avatar) {
-            naruto_avatar->setSpriteVariant(5); // Smug
+        if (custom_avatar) {
+            custom_avatar->setSpriteVariant(5); // Smug
         }
     } else if (strcmp(emotion, "sleepy") == 0) {
         avatar.setEmotion(Emotion::Sleepy);
@@ -508,8 +508,8 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = -1;
         }
 
-        if (auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
-            naruto_avatar->setSpriteVariant(1); // Thinking / attentive while listening
+        if (auto* custom_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
+            custom_avatar->setSpriteVariant(1); // Thinking / attentive while listening
         }
 
         GetHAL().setRgbColor(0, 0, 50, 0);
@@ -525,8 +525,8 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = -1;
         }
 
-        if (auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
-            naruto_avatar->setSpriteVariant(-1); // Return to current emotion (Calm by default)
+        if (auto* custom_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
+            custom_avatar->setSpriteVariant(-1); // Return to current emotion (Calm by default)
         }
 
         is_idle = true;
@@ -539,8 +539,8 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = stackchan.addModifier(std::make_unique<SpeakingModifier>(0, 180, false));
         }
 
-        if (auto* naruto_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
-            naruto_avatar->setSpriteVariant(-1); // Allow animated alternation while speaking
+        if (auto* custom_avatar = dynamic_cast<DefaultAvatar*>(&avatar)) {
+            custom_avatar->setSpriteVariant(-1); // Allow animated alternation while speaking
         }
 
         GetHAL().setRgbColor(0, 0, 0, 50);

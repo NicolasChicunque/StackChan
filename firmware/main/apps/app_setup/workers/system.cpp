@@ -322,7 +322,7 @@ void FactoryResetWorker::update_ui()
 
 AvatarStyleWorker::AvatarStyleWorker()
 {
-    _use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto);
+    _use_custom_avatar = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Custom);
 
     _panel = std::make_unique<Container>(lv_screen_active());
     _panel->setBgColor(lv_color_hex(0xEDF4FF));
@@ -351,18 +351,18 @@ AvatarStyleWorker::AvatarStyleWorker()
     _btn_classic->label().setTextFont(&lv_font_montserrat_20);
     _btn_classic->label().setText("Classic");
     _btn_classic->onClick().connect([this]() {
-        _use_naruto = false;
+        _use_custom_avatar = false;
         refresh_buttons();
     });
 
-    _btn_naruto = std::make_unique<Button>(*_panel);
-    apply_button_common_style(*_btn_naruto);
-    _btn_naruto->align(LV_ALIGN_CENTER, 72, -2);
-    _btn_naruto->setSize(132, 54);
-    _btn_naruto->label().setTextFont(&lv_font_montserrat_20);
-    _btn_naruto->label().setText("Custom");
-    _btn_naruto->onClick().connect([this]() {
-        _use_naruto = true;
+    _btn_custom_avatar = std::make_unique<Button>(*_panel);
+    apply_button_common_style(*_btn_custom_avatar);
+    _btn_custom_avatar->align(LV_ALIGN_CENTER, 72, -2);
+    _btn_custom_avatar->setSize(132, 54);
+    _btn_custom_avatar->label().setTextFont(&lv_font_montserrat_20);
+    _btn_custom_avatar->label().setText("Custom");
+    _btn_custom_avatar->onClick().connect([this]() {
+        _use_custom_avatar = true;
         refresh_buttons();
     });
 
@@ -374,7 +374,7 @@ AvatarStyleWorker::AvatarStyleWorker()
     _btn_confirm->label().setText("Confirm");
     _btn_confirm->onClick().connect([this]() {
         stackchan::avatar::setAvatarStyle(
-            _use_naruto ? stackchan::avatar::AvatarStyle::Naruto : stackchan::avatar::AvatarStyle::Classic);
+            _use_custom_avatar ? stackchan::avatar::AvatarStyle::Custom : stackchan::avatar::AvatarStyle::Classic);
         _is_done = true;
     });
 
@@ -384,12 +384,12 @@ AvatarStyleWorker::AvatarStyleWorker()
 void AvatarStyleWorker::refresh_buttons()
 {
     if (_btn_classic) {
-        _btn_classic->setBgColor(lv_color_hex(_use_naruto ? 0xB8D3FD : 0x615B9E));
-        _btn_classic->label().setTextColor(lv_color_hex(_use_naruto ? 0x26206A : 0xFFFFFF));
+        _btn_classic->setBgColor(lv_color_hex(_use_custom_avatar ? 0xB8D3FD : 0x615B9E));
+        _btn_classic->label().setTextColor(lv_color_hex(_use_custom_avatar ? 0x26206A : 0xFFFFFF));
     }
-    if (_btn_naruto) {
-        _btn_naruto->setBgColor(lv_color_hex(_use_naruto ? 0x615B9E : 0xB8D3FD));
-        _btn_naruto->label().setTextColor(lv_color_hex(_use_naruto ? 0xFFFFFF : 0x26206A));
+    if (_btn_custom_avatar) {
+        _btn_custom_avatar->setBgColor(lv_color_hex(_use_custom_avatar ? 0x615B9E : 0xB8D3FD));
+        _btn_custom_avatar->label().setTextColor(lv_color_hex(_use_custom_avatar ? 0xFFFFFF : 0x26206A));
     }
 }
 

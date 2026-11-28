@@ -54,7 +54,7 @@ using PsramString = std::basic_string<char, std::char_traits<char>, PsramAllocat
 
 /**
  * @brief MicroSD (/sd) music player app for StackChan.
- * Clean UI with a 6-button control bar, animated Naruto avatar,
+ * Clean UI with a 6-button control bar, animated Custom Avatar avatar,
  * dedicated settings screen, and automatic NVS persistence.
  */
 class AppMusicPlayer : public mooncake::AppAbility {
@@ -253,9 +253,9 @@ private:
     int32_t _target_start_ms  = 0;
     AudioProbeInfo _active_probe;
 
-    // Naruto avatar assets for the music player
-    lv_image_dsc_t _img_naruto_calm  = {};
-    lv_image_dsc_t _img_naruto_happy = {};
+    // Custom Avatar avatar assets for the music player
+    lv_image_dsc_t _img_avatar_calm  = {};
+    lv_image_dsc_t _img_avatar_happy = {};
 
     /* --------------------------- LVGL Widgets ----------------------------- */
     lv_obj_t* _root_screen    = nullptr;
@@ -276,7 +276,7 @@ private:
     lv_obj_t* _lbl_vol_ver    = nullptr;
     lv_obj_t* _lbl_status     = nullptr;
 
-    // Center stage: animated Naruto or classic StackChan avatar + floating musical notes
+    // Center stage: animated Custom Avatar or classic StackChan avatar + floating musical notes
     lv_obj_t* _stage_cont     = nullptr;
     lv_obj_t* _avatar_img     = nullptr;
     lv_obj_t* _face_card      = nullptr;

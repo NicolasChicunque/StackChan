@@ -174,9 +174,9 @@ private:
     uint32_t _last_ui_tick   = 0;
     uint32_t _last_anim_tick = 0;
 
-    // Cached 7-state Naruto expressions
-    lv_image_dsc_t _naruto_imgs[static_cast<int>(FaceExpr::Count)] = {};
-    int _shown_naruto_idx[2] = {-1, -1};
+    // Cached 7-state Custom Avatar expressions
+    lv_image_dsc_t _avatar_imgs[static_cast<int>(FaceExpr::Count)] = {};
+    int _shown_avatar_idx[2] = {-1, -1};
 
     /* --------------------------- LVGL Widgets ----------------------------- */
     lv_obj_t* _root         = nullptr;

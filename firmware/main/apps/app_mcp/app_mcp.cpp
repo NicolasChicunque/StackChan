@@ -74,7 +74,7 @@ constexpr uint32_t COL_TEXT          = 0xE8EEF9;
 constexpr uint32_t COL_DIM           = 0x7C89A8;
 constexpr uint32_t COL_WHITE         = 0xFFFFFF;
 
-const char* const NARUTO_ASSET_NAMES[7] = {
+const char* const AVATAR_ASSET_NAMES[7] = {
     "avatar_calm.bin",
     "avatar_thinking.bin",
     "avatar_happy.bin",
@@ -232,8 +232,8 @@ void AppMcp::onOpen()
     _explicit_motion_until = 0;
     _base_yaw_deg        = 0;
     _base_pitch_deg      = Y_HOME_DEG;
-    _shown_naruto_idx[0] = -1;
-    _shown_naruto_idx[1] = -1;
+    _shown_avatar_idx[0] = -1;
+    _shown_avatar_idx[1] = -1;
 
     // Load saved speaker volume, auto mode, silence pause, mic sensitivity & speak motion
     {
@@ -255,9 +255,9 @@ void AppMcp::onOpen()
     _settings_open = false;
     GetHAL().setSpeakerVolume(static_cast<uint8_t>(_volume.load()), false);
 
-    // Load Naruto 7-state expressions (if present in assets partition)
+    // Load Custom Avatar 7-state expressions (if present in assets partition)
     for (int i = 0; i < static_cast<int>(FaceExpr::Count); ++i) {
-        _naruto_imgs[i] = assets::get_image(NARUTO_ASSET_NAMES[i]);
+        _avatar_imgs[i] = assets::get_image(AVATAR_ASSET_NAMES[i]);
     }
 
     // Allocate dictation WAV buffer in PSRAM
@@ -1613,7 +1613,7 @@ void AppMcp::build_ui()
     const int slot_h       = stage_h - 12;
     const int slot_x[2]    = {8, 158};
     const char* slot_txt[2] = {"FREE", "AGENT $"};
-    const int naruto_scale = is_fix ? 104 : 114;
+    const int avatar_scale = is_fix ? 104 : 114;
 
     for (int i = 0; i < 2; ++i) {
         _slot_card[i] = lv_obj_create(_stage);
@@ -1636,16 +1636,16 @@ void AppMcp::build_ui()
         lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(0x94A3B8), 0);
         lv_label_set_text(_slot_lbl[i], slot_txt[i]);
 
-        // Naruto avatar image (scaled cleanly inside slot)
+        // Custom Avatar avatar image (scaled cleanly inside slot)
         _avatar_img[i] = lv_image_create(_slot_card[i]);
-        if (_naruto_imgs[0].data != nullptr) {
-            lv_image_set_src(_avatar_img[i], &_naruto_imgs[0]);
-            lv_image_set_scale(_avatar_img[i], naruto_scale);
+        if (_avatar_imgs[0].data != nullptr) {
+            lv_image_set_src(_avatar_img[i], &_avatar_imgs[0]);
+            lv_image_set_scale(_avatar_img[i], avatar_scale);
         }
         lv_obj_align(_avatar_img[i], LV_ALIGN_CENTER, 0, 8);
         lv_obj_remove_flag(_avatar_img[i], LV_OBJ_FLAG_CLICKABLE);
 
-        // Classic StackChan face fallback (used when Naruto sprites are not active/present)
+        // Classic StackChan face fallback (used when Custom Avatar sprites are not active/present)
         _face_card[i] = lv_obj_create(_slot_card[i]);
         lv_obj_set_size(_face_card[i], 96, is_fix ? 56 : 62);
         lv_obj_align(_face_card[i], LV_ALIGN_CENTER, 0, 9);
@@ -2104,8 +2104,8 @@ void AppMcp::refresh_avatar_anim(uint32_t now)
     if (!_stage || !_slot_card[0] || !_slot_card[1]) {
         return;
     }
-    bool use_naruto  = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-                        _naruto_imgs[0].data != nullptr);
+    bool use_avatar  = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Custom &&
+                        _avatar_imgs[0].data != nullptr);
     bool speaking    = _playing.load();
     int face_idx     = std::clamp(_face.load(), 0, static_cast<int>(FaceExpr::Count) - 1);
     const auto amode = static_cast<AgentMode>(_agent_mode.load());
@@ -2114,7 +2114,7 @@ void AppMcp::refresh_avatar_anim(uint32_t now)
 
     for (int i = 0; i < 2; ++i) {
         const bool is_active = (i == active);
-        if (use_naruto) {
+        if (use_avatar) {
             lv_obj_add_flag(_face_card[i], LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(_avatar_img[i], LV_OBJ_FLAG_HIDDEN);
 
@@ -2122,12 +2122,12 @@ void AppMcp::refresh_avatar_anim(uint32_t now)
             if (is_active && speaking && _speak_rms.load() > 600 && ((now / 180) % 2 == 0)) {
                 show_idx = static_cast<int>(FaceExpr::Happy);
             }
-            if (_naruto_imgs[show_idx].data == nullptr) {
+            if (_avatar_imgs[show_idx].data == nullptr) {
                 show_idx = 0;
             }
-            if (show_idx != _shown_naruto_idx[i]) {
-                lv_image_set_src(_avatar_img[i], &_naruto_imgs[show_idx]);
-                _shown_naruto_idx[i] = show_idx;
+            if (show_idx != _shown_avatar_idx[i]) {
+                lv_image_set_src(_avatar_img[i], &_avatar_imgs[show_idx]);
+                _shown_avatar_idx[i] = show_idx;
             }
             int dy = (is_active && speaking) ? static_cast<int>(std::sin(now * 0.02f) * 2.5f) : 0;
             lv_obj_align(_avatar_img[i], LV_ALIGN_CENTER, 0, 8 + dy);

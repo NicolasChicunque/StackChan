@@ -58,9 +58,9 @@ private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _left_eye;
     std::unique_ptr<uitk::lvgl_cpp::Container> _right_eye;
     std::unique_ptr<uitk::lvgl_cpp::Container> _mouth;
-    lv_obj_t* _naruto_img          = nullptr;
-    lv_image_dsc_t _naruto_imgs[4] = {};
-    bool _use_naruto               = false;
+    lv_obj_t* _avatar_img          = nullptr;
+    lv_image_dsc_t _avatar_imgs[4] = {};
+    bool _use_custom_avatar               = false;
     int _color_index               = 0;
 };
 

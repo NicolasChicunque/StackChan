@@ -467,7 +467,7 @@ private:
 };
 
 /**
- * @brief Select between Classic StackChan and Naruto avatar styles.
+ * @brief Select between Classic StackChan and Custom Avatar avatar styles.
  *
  */
 class AvatarStyleWorker : public WorkerBase {
@@ -482,10 +482,10 @@ private:
     std::unique_ptr<uitk::lvgl_cpp::Label> _label_title;
     std::unique_ptr<uitk::lvgl_cpp::Label> _label_hint;
     std::unique_ptr<uitk::lvgl_cpp::Button> _btn_classic;
-    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_naruto;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_custom_avatar;
     std::unique_ptr<uitk::lvgl_cpp::Button> _btn_confirm;
 
-    bool _use_naruto = true;
+    bool _use_custom_avatar = true;
 };
 
 /**

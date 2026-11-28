@@ -256,9 +256,9 @@ void AppMusicPlayer::onOpen()
     stackchan.motion().setAutoTorqueReleaseEnabled(false);
     move_home(600);
 
-    // 3. Load Naruto sprites from the assets partition
-    _img_naruto_calm  = assets::get_image("avatar_calm_music.bin");
-    _img_naruto_happy = assets::get_image("avatar_happy_music.bin");
+    // 3. Load Custom Avatar sprites from the assets partition
+    _img_avatar_calm  = assets::get_image("avatar_calm_music.bin");
+    _img_avatar_happy = assets::get_image("avatar_happy_music.bin");
 
     // 4. Mount microSD card and scan tracks (.wav and .mp3)
     _sd_mounted = mount_sd();
@@ -2118,7 +2118,7 @@ void AppMusicPlayer::build_ui()
     lv_obj_set_style_text_font(_lbl_status, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(_lbl_status, lv_color_hex(COL_DIM), 0);
 
-    // Center stage: animated Naruto or classic StackChan avatar + floating musical notes
+    // Center stage: animated Custom Avatar or classic StackChan avatar + floating musical notes
     _stage_cont = lv_obj_create(_main_cont);
     lv_obj_set_pos(_stage_cont, STAGE_X, stage_y);
     lv_obj_set_size(_stage_cont, STAGE_W, stage_h);
@@ -2133,10 +2133,10 @@ void AppMusicPlayer::build_ui()
     };
 
     _avatar_img = lv_image_create(_stage_cont);
-    if (_img_naruto_calm.data != nullptr) {
-        lv_image_set_src(_avatar_img, &_img_naruto_calm);
-        if (is_fix && _img_naruto_calm.header.h > 88) {
-            uint16_t scale = static_cast<uint16_t>((88 * 256) / _img_naruto_calm.header.h);
+    if (_img_avatar_calm.data != nullptr) {
+        lv_image_set_src(_avatar_img, &_img_avatar_calm);
+        if (is_fix && _img_avatar_calm.header.h > 88) {
+            uint16_t scale = static_cast<uint16_t>((88 * 256) / _img_avatar_calm.header.h);
             lv_image_set_scale(_avatar_img, scale);
         }
     }
@@ -3104,19 +3104,19 @@ void AppMusicPlayer::refresh_main_ui(uint32_t now)
 
 void AppMusicPlayer::apply_avatar_style()
 {
-    bool show_naruto =
-        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-         _img_naruto_calm.data != nullptr);
+    bool show_custom_avatar =
+        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Custom &&
+         _img_avatar_calm.data != nullptr);
 
     if (_avatar_img) {
-        if (show_naruto) {
+        if (show_custom_avatar) {
             lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
         }
     }
     if (_face_card) {
-        if (show_naruto) {
+        if (show_custom_avatar) {
             lv_obj_add_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_remove_flag(_face_card, LV_OBJ_FLAG_HIDDEN);
@@ -3132,21 +3132,21 @@ void AppMusicPlayer::refresh_avatar_anim(uint32_t now)
 
     apply_avatar_style();
     bool is_playing  = _playing.load();
-    bool show_naruto =
-        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-         _img_naruto_calm.data != nullptr);
+    bool show_custom_avatar =
+        (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Custom &&
+         _img_avatar_calm.data != nullptr);
 
     int offset_y = 0;
     int offset_x = 0;
 
-    if (show_naruto && _avatar_img) {
-        // Switch Naruto expression between Happy (playing) and Calm (paused)
+    if (show_custom_avatar && _avatar_img) {
+        // Switch Custom Avatar expression between Happy (playing) and Calm (paused)
         if (is_playing != _avatar_showing_happy) {
             _avatar_showing_happy = is_playing;
-            if (is_playing && _img_naruto_happy.data != nullptr) {
-                lv_image_set_src(_avatar_img, &_img_naruto_happy);
-            } else if (_img_naruto_calm.data != nullptr) {
-                lv_image_set_src(_avatar_img, &_img_naruto_calm);
+            if (is_playing && _img_avatar_happy.data != nullptr) {
+                lv_image_set_src(_avatar_img, &_img_avatar_happy);
+            } else if (_img_avatar_calm.data != nullptr) {
+                lv_image_set_src(_avatar_img, &_img_avatar_calm);
             }
         }
 

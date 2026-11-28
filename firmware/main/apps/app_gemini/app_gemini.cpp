@@ -407,9 +407,9 @@ void AppGemini::onOpen()
 
     _volume = std::clamp(static_cast<int>(GetHAL().getSpeakerVolume()), 10, 100);
 
-    // Load Naruto sprites for custom/naruto branch (respects global Classic/Naruto toggle)
-    _img_naruto_calm      = assets::get_image("avatar_calm_music.bin");
-    _img_naruto_happy     = assets::get_image("avatar_happy_music.bin");
+    // Load Custom Avatar sprites for custom/avatar branch (respects global Classic/Custom Avatar toggle)
+    _img_avatar_calm      = assets::get_image("avatar_calm_music.bin");
+    _img_avatar_happy     = assets::get_image("avatar_happy_music.bin");
     _avatar_showing_happy = false;
 
     // Allocate PSRAM playback ring buffer & Base64/VAD scratch buffers
@@ -2835,11 +2835,11 @@ void AppGemini::build_ui()
         lv_obj_remove_flag(_slot_lbl[i], LV_OBJ_FLAG_CLICKABLE);
 
         _dual_img[i] = lv_image_create(_slot_card[i]);
-        if (_img_naruto_calm.data != nullptr) {
-            lv_image_set_src(_dual_img[i], &_img_naruto_calm);
+        if (_img_avatar_calm.data != nullptr) {
+            lv_image_set_src(_dual_img[i], &_img_avatar_calm);
             int target_h = std::max<int>(64, slot_h - 18);
-            uint16_t sc  = (_img_naruto_calm.header.h > 0)
-                               ? static_cast<uint16_t>((target_h * 256) / _img_naruto_calm.header.h)
+            uint16_t sc  = (_img_avatar_calm.header.h > 0)
+                               ? static_cast<uint16_t>((target_h * 256) / _img_avatar_calm.header.h)
                                : static_cast<uint16_t>(is_fix ? 120 : 136);
             lv_image_set_scale(_dual_img[i], sc);
         }
@@ -3179,8 +3179,8 @@ void AppGemini::refresh_ui(uint32_t now)
         _last_rendered_agent = agent_on;
 
         bool need_key   = (st == SessionState::NeedKey);
-        bool use_naruto = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-                           _img_naruto_calm.data != nullptr);
+        bool use_avatar = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Custom &&
+                           _img_avatar_calm.data != nullptr);
         if (need_key) {
             lv_obj_remove_flag(_setup_card, LV_OBJ_FLAG_HIDDEN);
             if (_dual_stage) lv_obj_add_flag(_dual_stage, LV_OBJ_FLAG_HIDDEN);
@@ -3220,7 +3220,7 @@ void AppGemini::refresh_ui(uint32_t now)
                 lv_obj_set_style_opa(_slot_card[i], opa[i], 0);
                 lv_obj_set_style_bg_color(_slot_dot[i], lv_color_hex(txt[i]), 0);
                 lv_obj_set_style_text_color(_slot_lbl[i], lv_color_hex(txt[i]), 0);
-                if (use_naruto && _dual_img[i]) {
+                if (use_avatar && _dual_img[i]) {
                     lv_obj_remove_flag(_dual_img[i], LV_OBJ_FLAG_HIDDEN);
                     lv_obj_add_flag(_dual_face[i], LV_OBJ_FLAG_HIDDEN);
                 } else {
@@ -3367,16 +3367,16 @@ void AppGemini::refresh_face_anim(uint32_t now, SessionState st)
     if (!_dual_stage) {
         return;
     }
-    bool use_naruto  = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Naruto &&
-                        _img_naruto_calm.data != nullptr);
+    bool use_avatar  = (stackchan::avatar::getAvatarStyle() == stackchan::avatar::AvatarStyle::Custom &&
+                        _img_avatar_calm.data != nullptr);
     const int active = (_mcp_attached.load() && _mcp_agent_active.load()) ? 1 : 0;
     const bool spk   = (st == SessionState::Speaking);
     const int rms    = _audio_rms.load();
     for (int i = 0; i < 2; ++i) {
         const bool is_act = (i == active);
-        if (use_naruto && _dual_img[i]) {
+        if (use_avatar && _dual_img[i]) {
             bool happy = (is_act && spk && rms > 500 && ((now / 180) % 2 == 0));
-            lv_image_set_src(_dual_img[i], (happy && _img_naruto_happy.data) ? &_img_naruto_happy : &_img_naruto_calm);
+            lv_image_set_src(_dual_img[i], (happy && _img_avatar_happy.data) ? &_img_avatar_happy : &_img_avatar_calm);
             int dy = (is_act && spk) ? -std::clamp(rms / 400, 0, 4) : 0;
             lv_obj_align(_dual_img[i], LV_ALIGN_CENTER, 0, 6 + dy);
         } else if (_dual_face[i]) {

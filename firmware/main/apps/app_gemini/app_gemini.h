@@ -255,8 +255,8 @@ private:
     lv_obj_t* _lbl_vol_batt     = nullptr;
 
     lv_obj_t* _stage_cont       = nullptr;
-    lv_image_dsc_t _img_naruto_calm  = {};
-    lv_image_dsc_t _img_naruto_happy = {};
+    lv_image_dsc_t _img_avatar_calm  = {};
+    lv_image_dsc_t _img_avatar_happy = {};
     bool _avatar_showing_happy  = false;
 
     // Always-on Dual-Avatar stage (Left: LIVE <Voice>, Right: AGENT $)

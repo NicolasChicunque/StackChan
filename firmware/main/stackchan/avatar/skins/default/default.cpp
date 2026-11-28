@@ -21,7 +21,7 @@ constexpr const char* kAvatarNvsNs  = "avatar_prefs";
 constexpr const char* kAvatarNvsKey = "style";
 std::atomic<int> s_cached_avatar_style{-1};
 
-constexpr const char* kNarutoAssetNames[7] = {
+constexpr const char* kAvatarAssetNames[7] = {
     "avatar_calm.bin",     // 0: Neutral / Calm
     "avatar_thinking.bin", // 1: Doubt / Thinking / Listening
     "avatar_happy.bin",    // 2: Happy / Laughing
@@ -50,10 +50,10 @@ AvatarStyle stackchan::avatar::getAvatarStyle()
 {
     int cached = s_cached_avatar_style.load();
     if (cached >= 0) {
-        return (cached == static_cast<int>(AvatarStyle::Naruto)) ? AvatarStyle::Naruto : AvatarStyle::Classic;
+        return (cached == static_cast<int>(AvatarStyle::Custom)) ? AvatarStyle::Custom : AvatarStyle::Classic;
     }
 
-    uint8_t val = static_cast<uint8_t>(AvatarStyle::Naruto);
+    uint8_t val = static_cast<uint8_t>(AvatarStyle::Custom);
     nvs_handle_t h{};
     if (nvs_open(kAvatarNvsNs, NVS_READONLY, &h) == ESP_OK) {
         uint8_t stored = val;
@@ -69,7 +69,7 @@ AvatarStyle stackchan::avatar::getAvatarStyle()
 
 void stackchan::avatar::setAvatarStyle(AvatarStyle style)
 {
-    uint8_t val = (style == AvatarStyle::Naruto) ? 1 : 0;
+    uint8_t val = (style == AvatarStyle::Custom) ? 1 : 0;
     s_cached_avatar_style.store(static_cast<int>(val));
 
     nvs_handle_t h{};
@@ -82,12 +82,12 @@ void stackchan::avatar::setAvatarStyle(AvatarStyle style)
 
 DefaultAvatar::~DefaultAvatar()
 {
-    _naruto_img = nullptr;
+    _avatar_img = nullptr;
     _pannel.reset();
     for (int i = 0; i < 7; ++i) {
-        if (_naruto_psram_bufs[i]) {
-            heap_caps_free(_naruto_psram_bufs[i]);
-            _naruto_psram_bufs[i] = nullptr;
+        if (_avatar_psram_bufs[i]) {
+            heap_caps_free(_avatar_psram_bufs[i]);
+            _avatar_psram_bufs[i] = nullptr;
         }
     }
 }
@@ -102,19 +102,19 @@ void DefaultAvatar::init(lv_obj_t* parent, const lv_font_t* font)
     _pannel->setBgColor(lv_color_hex(0x0B0F1A));
     _pannel->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
-    // Load all 7 Naruto sprites and copy them to PSRAM to avoid Flash SPI contention during audio/Wi-Fi
-    _naruto_enabled = false;
+    // Load all 7 Custom Avatar sprites and copy them to PSRAM to avoid Flash SPI contention during audio/Wi-Fi
+    _avatar_enabled = false;
     for (int i = 0; i < 7; ++i) {
-        _naruto_sprites[i] = assets::get_image(kNarutoAssetNames[i]);
-        if (_naruto_sprites[i].data != nullptr && _naruto_sprites[i].data_size > 0) {
+        _avatar_sprites[i] = assets::get_image(kAvatarAssetNames[i]);
+        if (_avatar_sprites[i].data != nullptr && _avatar_sprites[i].data_size > 0) {
             uint8_t* psram_copy = static_cast<uint8_t*>(
-                heap_caps_malloc(_naruto_sprites[i].data_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                heap_caps_malloc(_avatar_sprites[i].data_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             if (psram_copy) {
-                std::memcpy(psram_copy, _naruto_sprites[i].data, _naruto_sprites[i].data_size);
-                _naruto_psram_bufs[i]   = psram_copy;
-                _naruto_sprites[i].data = psram_copy;
+                std::memcpy(psram_copy, _avatar_sprites[i].data, _avatar_sprites[i].data_size);
+                _avatar_psram_bufs[i]   = psram_copy;
+                _avatar_sprites[i].data = psram_copy;
             }
-            _naruto_enabled = true;
+            _avatar_enabled = true;
         }
     }
 
@@ -123,10 +123,10 @@ void DefaultAvatar::init(lv_obj_t* parent, const lv_font_t* font)
     _key_elements.rightEye = std::make_unique<DefaultEyes>(_pannel->get(), primaryColor, secondaryColor, false);
     _key_elements.mouth    = std::make_unique<DefaultMouth>(_pannel->get(), primaryColor, secondaryColor);
 
-    if (_naruto_enabled) {
-        _naruto_img = lv_image_create(_pannel->get());
-        lv_obj_align(_naruto_img, LV_ALIGN_CENTER, 0, -10);
-        lv_obj_remove_flag(_naruto_img, LV_OBJ_FLAG_CLICKABLE);
+    if (_avatar_enabled) {
+        _avatar_img = lv_image_create(_pannel->get());
+        lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, -10);
+        lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_CLICKABLE);
         _last_ox = 0;
         _last_oy = -10;
     }
@@ -141,8 +141,8 @@ void DefaultAvatar::init(lv_obj_t* parent, const lv_font_t* font)
 void DefaultAvatar::sync_avatar_style(bool force)
 {
     AvatarStyle desired =
-        (_naruto_enabled && _naruto_img && getAvatarStyle() == AvatarStyle::Naruto)
-            ? AvatarStyle::Naruto
+        (_avatar_enabled && _avatar_img && getAvatarStyle() == AvatarStyle::Custom)
+            ? AvatarStyle::Custom
             : AvatarStyle::Classic;
 
     if (!force && desired == _active_style) {
@@ -150,21 +150,21 @@ void DefaultAvatar::sync_avatar_style(bool force)
     }
 
     _active_style = desired;
-    if (desired == AvatarStyle::Naruto) {
+    if (desired == AvatarStyle::Custom) {
         _pannel->setBgColor(lv_color_hex(0x0B0F1A));
         _key_elements.leftEye->setVisible(false);
         _key_elements.rightEye->setVisible(false);
         _key_elements.mouth->setVisible(false);
-        lv_obj_remove_flag(_naruto_img, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
         _current_sprite = -1;
         int idx         = (_forced_variant >= 0 && _forced_variant < 7)
                               ? _forced_variant
                               : emotion_to_sprite_idx(_emotion);
-        apply_naruto_sprite(idx);
+        apply_avatar_sprite(idx);
     } else {
         _pannel->setBgColor(secondaryColor);
-        if (_naruto_img) {
-            lv_obj_add_flag(_naruto_img, LV_OBJ_FLAG_HIDDEN);
+        if (_avatar_img) {
+            lv_obj_add_flag(_avatar_img, LV_OBJ_FLAG_HIDDEN);
         }
         _key_elements.leftEye->setVisible(true);
         _key_elements.rightEye->setVisible(true);
@@ -172,17 +172,17 @@ void DefaultAvatar::sync_avatar_style(bool force)
     }
 }
 
-void DefaultAvatar::apply_naruto_sprite(int idx)
+void DefaultAvatar::apply_avatar_sprite(int idx)
 {
-    if (!_naruto_img || idx < 0 || idx >= 7) {
+    if (!_avatar_img || idx < 0 || idx >= 7) {
         return;
     }
-    if (_naruto_sprites[idx].data == nullptr) {
+    if (_avatar_sprites[idx].data == nullptr) {
         idx = 0;
     }
-    if (_current_sprite != idx && _naruto_sprites[idx].data != nullptr) {
+    if (_current_sprite != idx && _avatar_sprites[idx].data != nullptr) {
         _current_sprite = idx;
-        lv_image_set_src(_naruto_img, &_naruto_sprites[idx]);
+        lv_image_set_src(_avatar_img, &_avatar_sprites[idx]);
     }
 }
 
@@ -190,17 +190,17 @@ void DefaultAvatar::setEmotion(const Emotion& emotion)
 {
     Avatar::setEmotion(emotion);
     _forced_variant = -1;
-    if (_active_style == AvatarStyle::Naruto) {
-        apply_naruto_sprite(emotion_to_sprite_idx(emotion));
+    if (_active_style == AvatarStyle::Custom) {
+        apply_avatar_sprite(emotion_to_sprite_idx(emotion));
     }
 }
 
 void DefaultAvatar::setSpriteVariant(int variant)
 {
     _forced_variant = variant;
-    if (_active_style == AvatarStyle::Naruto) {
+    if (_active_style == AvatarStyle::Custom) {
         int idx = (variant >= 0 && variant < 7) ? variant : emotion_to_sprite_idx(_emotion);
-        apply_naruto_sprite(idx);
+        apply_avatar_sprite(idx);
     }
 }
 
@@ -209,7 +209,7 @@ void DefaultAvatar::update()
     Avatar::update();
     sync_avatar_style(false);
 
-    if (_active_style != AvatarStyle::Naruto || !_naruto_img) {
+    if (_active_style != AvatarStyle::Custom || !_avatar_img) {
         return;
     }
 
@@ -232,7 +232,7 @@ void DefaultAvatar::update()
         }
         _last_anim_ms = now;
         if (_forced_variant < 0 && _emotion == Emotion::Neutral) {
-            apply_naruto_sprite((_current_sprite == 2) ? 0 : 2);
+            apply_avatar_sprite((_current_sprite == 2) ? 0 : 2);
         }
         return;
     }
@@ -243,14 +243,14 @@ void DefaultAvatar::update()
     _last_anim_ms = now;
 
     if (_forced_variant < 0) {
-        apply_naruto_sprite(emotion_to_sprite_idx(_emotion));
+        apply_avatar_sprite(emotion_to_sprite_idx(_emotion));
     }
 
     int oy = -10 + (((now / 1500) % 2 == 0) ? -2 : 2);
     if (_last_ox != 0 || _last_oy != oy) {
         _last_ox = 0;
         _last_oy = oy;
-        lv_obj_align(_naruto_img, LV_ALIGN_CENTER, 0, oy);
+        lv_obj_align(_avatar_img, LV_ALIGN_CENTER, 0, oy);
     }
 }
 
