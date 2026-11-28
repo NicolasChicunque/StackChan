@@ -55,6 +55,9 @@ extern "C" void app_main(void)
         const int alarm_app_id = GetMooncake().installApp(std::make_unique<AppAlarm>());
         hal_toggles::register_app_id(hal_toggles::App::Alarm, alarm_app_id);
 #endif
+#if STACKCHAN_ENABLE_APP_SPEAKER
+        GetMooncake().installApp(std::make_unique<AppSpeaker>());
+#endif
 #if STACKCHAN_ENABLE_APP_FX
         GetMooncake().installApp(std::make_unique<AppFx>());
 #endif

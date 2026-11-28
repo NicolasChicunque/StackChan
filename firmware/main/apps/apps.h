@@ -24,6 +24,9 @@
 #if STACKCHAN_ENABLE_APP_ALARM
 #include "app_alarm/app_alarm.h"
 #endif
+#if STACKCHAN_ENABLE_APP_SPEAKER
+#include "app_speaker/app_speaker.h"
+#endif
 #if STACKCHAN_ENABLE_APP_FX
 #include "app_fx/app_fx.h"
 #endif
