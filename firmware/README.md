@@ -30,7 +30,7 @@ To stay comfortably inside the ESP32-S3 OTA partition limit, custom apps are com
 
 | Pack | Flags |
 | --- | --- |
-| **Community Suite** *(default)* | `-DSTACKCHAN_ENABLE_APP_MUSIC=ON -DSTACKCHAN_ENABLE_APP_ALARM=ON -DSTACKCHAN_ENABLE_APP_GEMINI=ON -DSTACKCHAN_ENABLE_APP_MCP=ON` |
+| **Community Suite** *(default)* | `-DSTACKCHAN_ENABLE_APP_MUSIC=ON -DSTACKCHAN_ENABLE_APP_ALARM=ON -DSTACKCHAN_ENABLE_APP_GEMINI=ON -DSTACKCHAN_ENABLE_APP_MCP=ON -DSTACKCHAN_ENABLE_APP_SPEAKER=ON` |
 | **Community Labs Pack (12 Apps)** | Set the 4 flags above to `OFF` and enable `FX`, `HEALTH`, `GAMES`, `DECK`, `NFC`, `HOME`, `CALENDAR`, `ENGLISH`, `TRAKT`, `FILES`, `COMPANION`, `SENTINEL` |
 | **Standalone App** | Enable only one `STACKCHAN_ENABLE_APP_<NAME>=ON` and set the rest to `OFF` |
 
@@ -43,8 +43,31 @@ idf.py -DSTACKCHAN_ENABLE_APP_MUSIC=ON -DSTACKCHAN_ENABLE_APP_ALARM=OFF -DSTACKC
 ## Built-in Apps
 
 - **Stock M5Stack:** `AI.AGENT`, `AVATAR`, `ESPNOW.REMOTE`, `APP.CENTER` *(with Community/Official store toggle & SD cache)*, `EZDATA`, `DANCE`, `SETUP`
-- **Community Suite:** `MUSIC` (SD MP3/WAV + Internet Radio + Web/QR Remote), `ALARM` (Alarm/Timer/Stopwatch + RTC + SD MP3 ringtones + Nightstand), `GEMINI` (Direct Gemini Live API + Auto-Attach MCP bridge), `MCP` (Legacy HTTP bridge)
+- **Community Suite:** `MUSIC` (SD MP3/WAV + Internet Radio + Web/QR Remote), `ALARM` (Alarm/Timer/Stopwatch + RTC + SD MP3 ringtones + Nightstand), `GEMINI` (Direct Gemini Live API + Auto-Attach MCP bridge), `MCP` (Legacy HTTP bridge), `SPEAKER` (Wi-Fi Web/UDP + USB-C OTG UAC2 External Speaker with FFT lip-sync & dance)
 - **Community Labs Pack:** `FX`, `HEALTH`, `GAMES`, `DECK`, `NFC`, `HOME`, `CALENDAR`, `ENGLISH`, `TRAKT`, `FILES`, `COMPANION`, `SENTINEL`
+
+## Fast Local Iteration (Desktop UI Simulator & ccache Builds)
+
+### 1. Desktop UI Simulator (LVGL 9.5 + SDL2, 320×240)
+
+Preview and iterate on LVGL screens, layouts, QR codes, and status bar offsets on Windows in **~2 seconds** without flashing the robot:
+
+```powershell
+.\sim\run_sim.ps1            # Launch 3x3 Launcher, Avatar, Setup & Sandbox
+.\sim\run_sim.ps1 -Sandbox   # Boot straight into sim_sandbox.cpp
+```
+
+See [`sim/README.md`](sim/README.md) for keyboard shortcuts and prototyping tips.
+
+### 2. Accelerated ESP-IDF Builds (`ccache` + Single-App `app-flash`)
+
+Use [`scripts/fast_build.ps1`](scripts/fast_build.ps1) to automatically enable `ccache`, build only the app you are working on in its own build directory, and flash only the app partition (`app-flash` at `921600` baud):
+
+```powershell
+.\scripts\fast_build.ps1 -App music -Flash -Port COM3
+.\scripts\fast_build.ps1 -Pack suite -Flash -Monitor
+.\scripts\fast_build.ps1 -Pack minimal
+```
 
 ## Host-Side Unit Tests
 
